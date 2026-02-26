@@ -164,8 +164,7 @@ jobs:
           - host: windows-2025
             target: x86_64-pc-windows-msvc
             build: bun run build --target x86_64-pc-windows-msvc
-            # `windows-11-arm` is available, but bun does not have ARM64 support yet https://github.com/oven-sh/bun/issues/9824
-          - host: windows-2025
+          - host: windows-11-arm
             target: aarch64-pc-windows-msvc
             build: bun run build --target aarch64-pc-windows-msvc
           - host: macos-15
@@ -353,10 +352,8 @@ jobs:
         settings:
           - host: windows-2025
             target: x86_64-pc-windows-msvc
-          # Windows ARM64 can be built atm, but since bun does not have ARM64 support yet https://github.com/oven-sh/bun/issues/9824,
-          # we don't run it.
-          # - host: windows-11-arm
-          #   target: aarch64-pc-windows-msvc
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
           - host: macos-15-intel
             target: x86_64-apple-darwin
             build: bun run build --target x86_64-apple-darwin
