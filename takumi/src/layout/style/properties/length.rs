@@ -74,6 +74,10 @@ impl CalcLinear {
   fn resolve(self, basis: f32) -> f32 {
     self.px + self.percent * basis
   }
+
+  pub(crate) fn components(self) -> (f32, f32) {
+    (self.px, self.percent)
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -279,6 +283,15 @@ pub enum CalcHandle {
   Linear(CalcLinear),
 }
 
+impl CalcHandle {
+  pub(crate) fn resolve_linear(self, sizing: &Sizing) -> CalcLinear {
+    match self {
+      Self::Formula(formula) => formula.resolve(sizing),
+      Self::Linear(linear) => linear,
+    }
+  }
+}
+
 fn parse_calc_sum<'i>(input: &mut Parser<'i, '_>) -> ParseResult<'i, CalcValue> {
   let mut value = parse_calc_product(input)?;
 
@@ -411,14 +424,6 @@ fn parse_calc_factor<'i>(input: &mut Parser<'i, '_>) -> ParseResult<'i, CalcValu
     _ => Err(<Length as FromCss<'i>>::unexpected_token_error(
       location, token,
     )),
-  }
-}
-
-fn calc_handle_to_linear(handle: CalcHandle, sizing: &Sizing) -> CalcLinear {
-  match handle {
-    CalcHandle::Formula(formula) => formula.resolve(sizing),
-    // Already resolved via `formula.resolve(sizing)`, so this is intentionally a no-op.
-    CalcHandle::Linear(linear) => linear,
   }
 }
 
@@ -609,7 +614,7 @@ impl<const DEFAULT_AUTO: bool> Length<DEFAULT_AUTO> {
       Length::Pt(value) => value * ONE_PT_IN_PX,
       Length::Pc(value) => value * ONE_PC_IN_PX,
       // Calc linear values are already in device pixels.
-      Length::Calc(handle) => calc_handle_to_linear(handle, sizing).resolve(percentage_full_px),
+      Length::Calc(handle) => handle.resolve_linear(sizing).resolve(percentage_full_px),
     }
   }
 
@@ -628,7 +633,7 @@ impl<const DEFAULT_AUTO: bool> Length<DEFAULT_AUTO> {
         CompactLength::length(sizing.viewport.width.unwrap_or_default() as f32 * value / 100.0)
       }
       Length::Calc(handle) => {
-        let linear = calc_handle_to_linear(handle, sizing);
+        let linear = handle.resolve_linear(sizing);
 
         if is_near_zero(linear.percent) {
           return CompactLength::length(linear.px);
