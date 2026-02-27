@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use color::{Srgb, parse_color};
+use color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb, parse_color};
 use cssparser::{
   Parser, Token,
   color::{parse_hash_color, parse_named_color},
@@ -9,9 +9,18 @@ use cssparser::{
 use image::Rgba;
 
 use crate::{
-  layout::style::{CssToken, FromCss, MakeComputed, ParseResult, tw::TailwindPropertyParser},
+  layout::style::{
+    CssToken, FromCss, MakeComputed, ParseResult, PercentageNumber, tw::TailwindPropertyParser,
+  },
   rendering::fast_div_255,
 };
+
+fn is_cylindrical_color_space(color_space: ColorSpaceTag) -> bool {
+  matches!(
+    color_space,
+    ColorSpaceTag::Lch | ColorSpaceTag::Oklch | ColorSpaceTag::Hsl | ColorSpaceTag::Hwb
+  )
+}
 
 /// Represents a color with 8-bit RGBA components.
 #[derive(Debug, Default, Clone, PartialEq, Copy)]
@@ -326,6 +335,175 @@ impl Color {
   }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ColorMixItem {
+  color: Color,
+  percentage: Option<PercentageNumber>,
+}
+
+impl<'i> FromCss<'i> for ColorMixItem {
+  fn from_css(input: &mut Parser<'i, '_>) -> ParseResult<'i, Self> {
+    if let Ok(item) = input.try_parse(|input| -> ParseResult<'i, Self> {
+      let color = Color::from_css(input)?;
+      let percentage = input.try_parse(PercentageNumber::from_css).ok();
+
+      Ok(Self { color, percentage })
+    }) {
+      return Ok(item);
+    }
+
+    input.try_parse(|input| -> ParseResult<'i, Self> {
+      let percentage = PercentageNumber::from_css(input)?;
+      let color = Color::from_css(input)?;
+
+      Ok(Self {
+        color,
+        percentage: Some(percentage),
+      })
+    })
+  }
+
+  fn valid_tokens() -> &'static [CssToken] {
+    &[CssToken::Token("color and percentage")]
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ColorMix {
+  color_space: ColorSpaceTag,
+  hue_direction: HueDirection,
+  first: ColorMixItem,
+  second: ColorMixItem,
+}
+
+impl ColorMix {
+  fn evaluate(self) -> Option<Color> {
+    let mut p1 = self.first.percentage;
+    let mut p2 = self.second.percentage;
+
+    match (p1, p2) {
+      (None, None) => {
+        p1 = Some(PercentageNumber(0.5));
+        p2 = Some(PercentageNumber(0.5));
+      }
+      (Some(p1_value), None) => {
+        p2 = Some(PercentageNumber((1.0 - p1_value.0).max(0.0)));
+      }
+      (None, Some(p2_value)) => {
+        p1 = Some(PercentageNumber((1.0 - p2_value.0).max(0.0)));
+      }
+      _ => {}
+    }
+
+    let p1 = p1.unwrap_or(PercentageNumber(0.5)).0;
+    let p2 = p2.unwrap_or(PercentageNumber(0.5)).0;
+    let sum = p1 + p2;
+
+    if sum <= f32::EPSILON {
+      return None;
+    }
+
+    let weight_2 = p2 / sum;
+    let alpha_multiplier = sum.min(1.0);
+
+    let dynamic_1 = DynamicColor::from_alpha_color(AlphaColor::<Srgb>::from(
+      color::Rgba8::from_u8_array(self.first.color.0),
+    ));
+    let dynamic_2 = DynamicColor::from_alpha_color(AlphaColor::<Srgb>::from(
+      color::Rgba8::from_u8_array(self.second.color.0),
+    ));
+
+    let mixed = dynamic_1
+      .interpolate(dynamic_2, self.color_space, self.hue_direction)
+      .eval(weight_2)
+      .multiply_alpha(alpha_multiplier);
+
+    Some(Color(
+      mixed.to_alpha_color::<Srgb>().to_rgba8().to_u8_array(),
+    ))
+  }
+}
+
+impl<'i> FromCss<'i> for ColorMix {
+  fn from_css(input: &mut Parser<'i, '_>) -> ParseResult<'i, Self> {
+    input.expect_ident_matching("in")?;
+
+    let location = input.current_source_location();
+    let token = input.next()?;
+    let Token::Ident(color_space_ident) = token else {
+      return Err(Color::unexpected_token_error(location, token));
+    };
+
+    let color_space = match_ignore_ascii_case! { &color_space_ident,
+      "srgb" => ColorSpaceTag::Srgb,
+      "srgb-linear" => ColorSpaceTag::LinearSrgb,
+      "lab" => ColorSpaceTag::Lab,
+      "oklab" => ColorSpaceTag::Oklab,
+      "lch" => ColorSpaceTag::Lch,
+      "oklch" => ColorSpaceTag::Oklch,
+      "hsl" => ColorSpaceTag::Hsl,
+      "hwb" => ColorSpaceTag::Hwb,
+      "display-p3" => ColorSpaceTag::DisplayP3,
+      "a98-rgb" => ColorSpaceTag::A98Rgb,
+      "prophoto-rgb" => ColorSpaceTag::ProphotoRgb,
+      "rec2020" => ColorSpaceTag::Rec2020,
+      "xyz" | "xyz-d65" => ColorSpaceTag::XyzD65,
+      "xyz-d50" => ColorSpaceTag::XyzD50,
+      _ => return Err(Color::unexpected_token_error(location, token)),
+    };
+
+    let mut hue_direction = HueDirection::Shorter;
+    let mut has_hue_direction = false;
+
+    if let Ok(direction) = input.try_parse(|input| {
+      let location = input.current_source_location();
+      let token = input.next()?;
+      let Token::Ident(ident) = token else {
+        return Err(Color::unexpected_token_error(location, token));
+      };
+
+      let direction = match_ignore_ascii_case! { &ident,
+        "shorter" => HueDirection::Shorter,
+        "longer" => HueDirection::Longer,
+        "increasing" => HueDirection::Increasing,
+        "decreasing" => HueDirection::Decreasing,
+        _ => return Err(Color::unexpected_token_error(location, token)),
+      };
+
+      input.expect_ident_matching("hue")?;
+
+      Ok(direction)
+    }) {
+      hue_direction = direction;
+      has_hue_direction = true;
+    }
+
+    if has_hue_direction && !is_cylindrical_color_space(color_space) {
+      return Err(input.new_error_for_next_token());
+    }
+
+    input.expect_comma()?;
+    let first = ColorMixItem::from_css(input)?;
+    input.expect_comma()?;
+    let second = ColorMixItem::from_css(input)?;
+
+    if !input.is_exhausted() {
+      return Err(input.new_error_for_next_token());
+    }
+
+    Ok(Self {
+      color_space,
+      hue_direction,
+      first,
+      second,
+    })
+  }
+
+  fn valid_tokens() -> &'static [CssToken] {
+    &[CssToken::Token("color-mix()")]
+  }
+}
+
 impl<'i, const DEFAULT_CURRENT_COLOR: bool> FromCss<'i> for ColorInput<DEFAULT_CURRENT_COLOR> {
   fn from_css(input: &mut Parser<'i, '_>) -> ParseResult<'i, Self> {
     if input
@@ -365,6 +543,17 @@ impl<'i> FromCss<'i> for Color {
       Token::Function(_) => {
         // Have to clone to persist token, and allow input to be borrowed
         let token = token.clone();
+
+        if let Token::Function(function) = &token
+          && function.eq_ignore_ascii_case("color-mix")
+        {
+          return input.parse_nested_block(|input| {
+            let color_mix = ColorMix::from_css(input)?;
+            color_mix
+              .evaluate()
+              .ok_or_else(|| input.new_error_for_next_token())
+          });
+        }
 
         input.parse_nested_block(|input| {
           while input.next().is_ok() {}
@@ -477,6 +666,186 @@ mod tests {
     assert_eq!(
       ColorInput::from_str("deepskyblue"),
       Ok(ColorInput::<true>::Value(Color([0, 191, 255, 255])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_srgb_default_percentages() {
+    assert_eq!(
+      ColorInput::from_str("color-mix(in srgb, red, blue)"),
+      Ok(ColorInput::<true>::Value(Color([128, 0, 128, 255])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_equivalent_percentage_syntaxes() {
+    let canonical = ColorInput::<true>::from_str("color-mix(in srgb, red 25%, blue 75%)");
+
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in srgb, 25% red, 75% blue)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in srgb, red 25%, 75% blue)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in srgb, red 25%, blue)")
+    );
+    assert_eq!(
+      canonical,
+      Ok(ColorInput::<true>::Value(Color([64, 0, 191, 255])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_lch_missing_percentage_equivalence() {
+    let canonical = ColorInput::<true>::from_str("color-mix(in lch, purple 50%, plum 50%)");
+
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple 50%, plum)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple, plum 50%)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple, plum)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, plum, purple)")
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_lch_normalizes_equal_opaque_percentages() {
+    let canonical = ColorInput::<true>::from_str("color-mix(in lch, purple 50%, plum 50%)");
+
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple 55%, plum 55%)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple 70%, plum 70%)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple 95%, plum 95%)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple 125%, plum 125%)")
+    );
+    assert_eq!(
+      canonical,
+      ColorInput::<true>::from_str("color-mix(in lch, purple 9999%, plum 9999%)")
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_endpoint_percentages_return_endpoint_colors() {
+    assert_eq!(
+      ColorInput::<true>::from_str("color-mix(in srgb, red 100%, blue 0%)"),
+      ColorInput::<true>::from_str("red")
+    );
+    assert_eq!(
+      ColorInput::<true>::from_str("color-mix(in srgb, red 0%, blue 100%)"),
+      ColorInput::<true>::from_str("blue")
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_alpha_multiplier_under_100_percent() {
+    assert_eq!(
+      ColorInput::from_str("color-mix(in srgb, red 30%, blue 30%)"),
+      Ok(ColorInput::<true>::Value(Color([128, 0, 128, 153])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_hue_directions_change_result() {
+    assert_eq!(
+      ColorInput::<true>::from_str(
+        "color-mix(in hsl shorter hue, hsl(50deg 50% 50%), hsl(330deg 50% 50%))",
+      ),
+      Ok(ColorInput::<true>::Value(Color([191, 86, 64, 255])))
+    );
+    assert_eq!(
+      ColorInput::<true>::from_str(
+        "color-mix(in hsl decreasing hue, hsl(50deg 50% 50%), hsl(330deg 50% 50%))",
+      ),
+      Ok(ColorInput::<true>::Value(Color([191, 86, 64, 255])))
+    );
+    assert_eq!(
+      ColorInput::<true>::from_str(
+        "color-mix(in hsl longer hue, hsl(50deg 50% 50%), hsl(330deg 50% 50%))",
+      ),
+      Ok(ColorInput::<true>::Value(Color([64, 169, 191, 255])))
+    );
+    assert_eq!(
+      ColorInput::<true>::from_str(
+        "color-mix(in hsl increasing hue, hsl(50deg 50% 50%), hsl(330deg 50% 50%))",
+      ),
+      Ok(ColorInput::<true>::Value(Color([64, 169, 191, 255])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_over_100_percent_normalizes_weights() {
+    assert_eq!(
+      ColorInput::from_str("color-mix(in srgb, red 120%, blue 80%)"),
+      Ok(ColorInput::<true>::Value(Color([153, 0, 102, 255])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_unknown_color_space() {
+    assert!(ColorInput::<true>::from_str("color-mix(in unknown, red, blue)").is_err());
+  }
+
+  #[test]
+  fn test_parse_color_mix_hue_method_with_non_cylindrical_space_errors() {
+    assert!(ColorInput::<true>::from_str("color-mix(in srgb longer hue, red, blue)").is_err());
+  }
+
+  #[test]
+  fn test_parse_color_mix_malformed_missing_comma_errors() {
+    assert!(ColorInput::<true>::from_str("color-mix(in srgb, red blue)").is_err());
+  }
+
+  #[test]
+  fn test_parse_color_mix_zero_sum_percentages_errors() {
+    assert!(ColorInput::<true>::from_str("color-mix(in srgb, red 0%, blue 0%)").is_err());
+  }
+
+  #[test]
+  fn test_parse_color_mix_accepts_number_as_percentage() {
+    assert_eq!(
+      ColorInput::<true>::from_str("color-mix(in srgb, red 0.5, blue 0.5)"),
+      Ok(ColorInput::<true>::Value(Color([128, 0, 128, 255])))
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_nested_color_mix() {
+    assert!(
+      ColorInput::<true>::from_str("color-mix(in srgb, color-mix(in srgb, red, blue), white)")
+        .is_ok()
+    );
+  }
+
+  #[test]
+  fn test_parse_color_mix_inside_linear_gradient() {
+    use crate::layout::style::properties::linear_gradient::LinearGradient;
+
+    assert!(
+      LinearGradient::from_str("linear-gradient(to right, color-mix(in srgb, red, blue), white)")
+        .is_ok()
     );
   }
 }
