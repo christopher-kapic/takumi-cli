@@ -1,7 +1,7 @@
 import { Editor } from "@monaco-editor/react";
 import { shikiToMonaco } from "@shikijs/monaco";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createHighlighterCore } from "shiki/core";
 import { createOnigurumaEngine } from "shiki/engine-oniguruma.mjs";
 import takumiTypings from "../../../node_modules/@takumi-rs/wasm/pkg/takumi_wasm.d.ts?raw";
@@ -49,6 +49,11 @@ export function ComponentEditor({
 }) {
   const { resolvedTheme } = useTheme();
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const editorRef = useRef<
+    | Parameters<NonNullable<React.ComponentProps<typeof Editor>["onMount"]>>[0]
+    | null
+  >(null);
+  const isApplyingExternalCodeRef = useRef(false);
   const theme =
     resolvedTheme === "dark" ? "github-dark-default" : "github-light-default";
 
@@ -68,6 +73,19 @@ export function ComponentEditor({
       mobileMediaQuery.removeEventListener("change", updateMobileViewport);
     };
   }, []);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+
+    if (!editor || !model || model.getValue() === code) {
+      return;
+    }
+
+    isApplyingExternalCodeRef.current = true;
+    editor.setValue(code);
+    isApplyingExternalCodeRef.current = false;
+  }, [code]);
 
   return (
     <Editor
@@ -113,6 +131,9 @@ export function ComponentEditor({
 
         shikiToMonaco(highlighter, monaco);
       }}
+      onMount={(editor) => {
+        editorRef.current = editor;
+      }}
       width="100%"
       height="100%"
       language="typescript"
@@ -147,9 +168,9 @@ export function ComponentEditor({
         scrollBeyondLastLine: false,
       }}
       loading="Launching editor..."
-      value={code}
+      defaultValue={code}
       onChange={(value) => {
-        if (value !== undefined) {
+        if (value !== undefined && !isApplyingExternalCodeRef.current) {
           setCode(value);
         }
       }}

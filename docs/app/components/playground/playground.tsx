@@ -155,7 +155,6 @@ export default function Playground() {
 
   const loadTemplate = (templateCode: string) => {
     setCode(templateCode);
-    setActiveTab("code");
   };
   const resetCode = () => {
     setCode(DEFAULT_TEMPLATE.code);
@@ -223,35 +222,35 @@ export default function Playground() {
         </Button>
       </div>
 
-      {activeTab === "code" && (
-        <div className="ml-auto flex min-w-0 items-center gap-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 min-w-0 max-w-40 px-2 text-[11px] font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-              >
-                <span className="truncate">{selectedTemplateName}</span>
-                <ChevronDownIcon className="ml-1 h-3 w-3 text-zinc-500" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-[180px] bg-zinc-950 border-zinc-800 text-zinc-300"
+      <div className="ml-auto flex min-w-0 items-center gap-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 min-w-0 max-w-40 px-2 text-[11px] font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
             >
-              {templates.map((t) => (
-                <DropdownMenuItem
-                  key={t.name}
-                  onClick={() => loadTemplate(t.code)}
-                  className="text-xs focus:bg-zinc-900 focus:text-zinc-100 cursor-pointer"
-                >
-                  {t.name}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+              <span className="truncate">{selectedTemplateName}</span>
+              <ChevronDownIcon className="ml-1 h-3 w-3 text-zinc-500" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-[180px] bg-zinc-950 border-zinc-800 text-zinc-300"
+          >
+            {templates.map((t) => (
+              <DropdownMenuItem
+                key={t.name}
+                onClick={() => loadTemplate(t.code)}
+                className="text-xs focus:bg-zinc-900 focus:text-zinc-100 cursor-pointer"
+              >
+                {t.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
+        {activeTab === "code" && (
           <div className="flex shrink-0 items-center border-l border-zinc-800 ml-0.5 pl-1 gap-0.5">
             <Button
               variant="ghost"
@@ -277,8 +276,8 @@ export default function Playground() {
               <RotateCcwIcon className="h-3.5 w-3.5" />
             </Button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 
