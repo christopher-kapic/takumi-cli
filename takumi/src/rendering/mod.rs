@@ -17,6 +17,8 @@ mod write;
 
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
+use taffy::Size;
+
 pub(crate) use background_drawing::*;
 pub(crate) use blend::*;
 pub(crate) use canvas::*;
@@ -43,10 +45,28 @@ use crate::{
 pub(crate) struct Sizing {
   /// The viewport for the image renderer.
   pub(crate) viewport: Viewport,
+  /// The nearest query container size (content box) in device pixels.
+  pub(crate) container_size: Size<Option<f32>>,
   /// The font size in pixels.
   pub(crate) font_size: f32,
   /// The calc arena shared by the current layout tree.
   pub(crate) calc_arena: Rc<CalcArena>,
+}
+
+impl Sizing {
+  pub(crate) fn query_container_width(&self) -> f32 {
+    self
+      .container_size
+      .width
+      .unwrap_or(self.viewport.width.unwrap_or_default() as f32)
+  }
+
+  pub(crate) fn query_container_height(&self) -> f32 {
+    self
+      .container_size
+      .height
+      .unwrap_or(self.viewport.height.unwrap_or_default() as f32)
+  }
 }
 
 /// The context for the internal rendering. You should not construct this directly.
@@ -61,7 +81,7 @@ pub struct RenderContext<'g> {
   /// What the `currentColor` value is resolved to.
   pub(crate) current_color: Color,
   /// The style after inheritance.
-  pub(crate) style: ResolvedStyle,
+  pub(crate) style: Box<ResolvedStyle>,
   /// Whether to draw debug borders.
   pub(crate) draw_debug_border: bool,
   /// The resources fetched externally.
@@ -83,12 +103,13 @@ impl<'g> RenderContext<'g> {
       global,
       sizing: Sizing {
         viewport,
+        container_size: Size::NONE,
         font_size: viewport.font_size,
         calc_arena: Rc::new(CalcArena::default()),
       },
       transform: Affine::IDENTITY,
       current_color: Color::black(),
-      style: ResolvedStyle::default(),
+      style: Box::default(),
       draw_debug_border: false,
       fetched_resources,
       stylesheets: Rc::from_iter(stylesheets),
@@ -105,12 +126,13 @@ impl<'g> RenderContext<'g> {
       global,
       sizing: Sizing {
         viewport,
+        container_size: Size::NONE,
         font_size: viewport.font_size,
         calc_arena: Rc::new(CalcArena::default()),
       },
       transform: Affine::IDENTITY,
       current_color: Color::black(),
-      style: ResolvedStyle::default(),
+      style: Box::default(),
       draw_debug_border: false,
       fetched_resources,
     }

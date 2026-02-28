@@ -985,37 +985,37 @@ impl ResolvedStyle {
     }
   }
 
-  pub(crate) fn to_taffy_style(&self, context: &RenderContext) -> taffy::Style {
+  pub(crate) fn to_taffy_style(&self, sizing: &Sizing) -> taffy::Style {
     // Convert grid templates and associated line names
     let (grid_template_columns, grid_template_column_names) =
-      Self::convert_template_components(&self.grid_template_columns, &context.sizing);
+      Self::convert_template_components(&self.grid_template_columns, sizing);
     let (grid_template_rows, grid_template_row_names) =
-      Self::convert_template_components(&self.grid_template_rows, &context.sizing);
+      Self::convert_template_components(&self.grid_template_rows, sizing);
 
     let border_style = self.border_style.unwrap_or(self.border.style);
 
     taffy::Style {
       box_sizing: self.box_sizing.into(),
       size: Size {
-        width: self.width.resolve_to_dimension(&context.sizing),
-        height: self.height.resolve_to_dimension(&context.sizing),
+        width: self.width.resolve_to_dimension(sizing),
+        height: self.height.resolve_to_dimension(sizing),
       },
       border: if border_style == BorderStyle::None {
         Rect::zero()
       } else {
         self
           .resolved_border_width()
-          .map(|border| border.resolve_to_length_percentage(&context.sizing))
+          .map(|border| border.resolve_to_length_percentage(sizing))
       },
       padding: self
         .resolved_padding()
-        .map(|padding| padding.resolve_to_length_percentage(&context.sizing)),
+        .map(|padding| padding.resolve_to_length_percentage(sizing)),
       inset: self
         .resolved_inset()
-        .map(|inset| inset.resolve_to_length_percentage_auto(&context.sizing)),
+        .map(|inset| inset.resolve_to_length_percentage_auto(sizing)),
       margin: self
         .resolved_margin()
-        .map(|margin| margin.resolve_to_length_percentage_auto(&context.sizing)),
+        .map(|margin| margin.resolve_to_length_percentage_auto(sizing)),
       display: self.display.into(),
       flex_direction: self.flex_direction.into(),
       position: self.position.into(),
@@ -1028,12 +1028,12 @@ impl ResolvedStyle {
         .or_else(|| self.flex.map(|flex| flex.grow))
         .unwrap_or(0.0),
       align_items: self.align_items.into(),
-      gap: self.resolved_gap().resolve_to_size(&context.sizing),
+      gap: self.resolved_gap().resolve_to_size(sizing),
       flex_basis: self
         .flex_basis
         .or_else(|| self.flex.map(|flex| flex.basis))
         .unwrap_or(Length::Auto)
-        .resolve_to_dimension(&context.sizing),
+        .resolve_to_dimension(sizing),
       flex_shrink: self
         .flex_shrink
         .map(|shrink| shrink.0)
@@ -1041,18 +1041,18 @@ impl ResolvedStyle {
         .unwrap_or(1.0),
       flex_wrap: self.flex_wrap.into(),
       min_size: Size {
-        width: self.min_width.resolve_to_dimension(&context.sizing),
-        height: self.min_height.resolve_to_dimension(&context.sizing),
+        width: self.min_width.resolve_to_dimension(sizing),
+        height: self.min_height.resolve_to_dimension(sizing),
       },
       max_size: Size {
-        width: self.max_width.resolve_to_dimension(&context.sizing),
-        height: self.max_height.resolve_to_dimension(&context.sizing),
+        width: self.max_width.resolve_to_dimension(sizing),
+        height: self.max_height.resolve_to_dimension(sizing),
       },
       grid_auto_columns: self.grid_auto_columns.as_ref().map_or_else(Vec::new, |v| {
-        v.iter().map(|s| s.to_min_max(&context.sizing)).collect()
+        v.iter().map(|s| s.to_min_max(sizing)).collect()
       }),
       grid_auto_rows: self.grid_auto_rows.as_ref().map_or_else(Vec::new, |v| {
-        v.iter().map(|s| s.to_min_max(&context.sizing)).collect()
+        v.iter().map(|s| s.to_min_max(sizing)).collect()
       }),
       grid_auto_flow: self.grid_auto_flow.unwrap_or_default().into(),
       grid_column: self
@@ -1401,6 +1401,7 @@ mod tests {
     let mut style = ResolvedStyle::default();
     let sizing = Sizing {
       viewport: Viewport::new(Some(1200), Some(630)),
+      container_size: Size::NONE,
       font_size: 16.0,
       calc_arena: Rc::new(CalcArena::default()),
     };
@@ -1449,6 +1450,7 @@ mod tests {
     .inherit(&ResolvedStyle::default());
     parent.make_computed(&Sizing {
       viewport: Viewport::new(Some(1200), Some(630)),
+      container_size: Size::NONE,
       font_size: 32.0,
       calc_arena: Rc::new(CalcArena::default()),
     });
@@ -1456,6 +1458,7 @@ mod tests {
     let inherited_child = Style::default().inherit(&parent);
     let inherited_child_sizing = Sizing {
       viewport: Viewport::new(Some(1200), Some(630)),
+      container_size: Size::NONE,
       font_size: 32.0,
       calc_arena: Rc::new(CalcArena::default()),
     };
@@ -1472,6 +1475,7 @@ mod tests {
     .inherit(&parent);
     let child_sizing = Sizing {
       viewport: Viewport::new(Some(1200), Some(630)),
+      container_size: Size::NONE,
       font_size: 10.0,
       calc_arena: Rc::new(CalcArena::default()),
     };

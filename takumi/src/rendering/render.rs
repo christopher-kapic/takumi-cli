@@ -97,26 +97,32 @@ pub fn measure_layout<'g, N: Node<N>>(options: RenderOptions<'g, N>) -> Result<M
   let mut render_context =
     RenderContext::new(options.global, options.viewport, options.fetched_resources);
   render_context.draw_debug_border = options.draw_debug_border;
-  let root = RenderNode::from_node(&render_context, options.node);
+  let mut root = RenderNode::from_node(&render_context, options.node);
   let mut tree = LayoutTree::from_render_node(&root);
   tree.compute_layout(render_context.sizing.viewport.into());
   let layout_results = tree.into_results();
 
   collect_measure_result(
-    &root,
+    &mut root,
     &layout_results,
     layout_results.root_node_id(),
     Affine::IDENTITY,
+    Size {
+      width: options.viewport.width.map(|value| value as f32),
+      height: options.viewport.height.map(|value| value as f32),
+    },
   )
 }
 
 fn collect_measure_result<'g, Nodes: Node<Nodes>>(
-  node: &RenderNode<'g, Nodes>,
+  node: &mut RenderNode<'g, Nodes>,
   layout_results: &LayoutResults,
   node_id: NodeId,
   mut transform: Affine,
+  container_size: Size<Option<f32>>,
 ) -> Result<MeasuredNode> {
   let layout = *layout_results.layout(node_id)?;
+  node.context.sizing.container_size = container_size;
 
   transform *= Affine::translation(layout.location.x, layout.location.y);
 
@@ -203,15 +209,23 @@ fn collect_measure_result<'g, Nodes: Node<Nodes>>(
   }
 
   if !node.should_create_inline_layout()
-    && let Some(render_children) = node.children.as_deref()
+    && let Some(render_children) = node.children.as_deref_mut()
   {
     let layout_children = layout_results.children(node_id)?;
-    for (child, child_id) in render_children.iter().zip(layout_children.iter().copied()) {
+    let child_container_size = Size {
+      width: Some(layout.content_box_width()),
+      height: Some(layout.content_box_height()),
+    };
+    for (child, child_id) in render_children
+      .iter_mut()
+      .zip(layout_children.iter().copied())
+    {
       children.push(collect_measure_result(
         child,
         layout_results,
         child_id,
         local_transform,
+        child_container_size,
       )?);
     }
   }
@@ -265,7 +279,16 @@ pub fn render<'g, N: Node<N>>(options: RenderOptions<'g, N>) -> Result<RgbaImage
 
   let mut canvas = Canvas::new(root_size);
 
-  root.render(&layout_results, root_node_id, &mut canvas, Affine::IDENTITY)?;
+  root.render(
+    &layout_results,
+    root_node_id,
+    &mut canvas,
+    Affine::IDENTITY,
+    Size {
+      width: viewport.width.map(|value| value as f32),
+      height: viewport.height.map(|value| value as f32),
+    },
+  )?;
 
   Ok(canvas.into_inner())
 }
@@ -277,8 +300,16 @@ impl<'g, Nodes: Node<Nodes>> RenderNode<'g, Nodes> {
     node_id: NodeId,
     canvas: &mut Canvas,
     transform: Affine,
+    container_size: Size<Option<f32>>,
   ) -> Result<()> {
-    render_node(self, layout_results, node_id, canvas, transform)
+    render_node(
+      self,
+      layout_results,
+      node_id,
+      canvas,
+      transform,
+      container_size,
+    )
   }
 }
 
@@ -328,12 +359,15 @@ pub(crate) fn render_node<'g, Nodes: Node<Nodes>>(
   node_id: NodeId,
   canvas: &mut Canvas,
   mut transform: Affine,
+  container_size: Size<Option<f32>>,
 ) -> Result<()> {
   let layout = *layout_results.layout(node_id)?;
 
   if node.context.style.is_invisible() {
     return Ok(());
   }
+
+  node.context.sizing.container_size = container_size;
 
   transform *= Affine::translation(layout.location.x, layout.location.y);
 
@@ -419,8 +453,19 @@ pub(crate) fn render_node<'g, Nodes: Node<Nodes>>(
     node.draw_inline(canvas, layout)?;
   } else if let Some(children) = node.children.as_deref_mut() {
     let layout_children = layout_results.children(node_id)?;
+    let child_container_size = Size {
+      width: Some(layout.content_box_width()),
+      height: Some(layout.content_box_height()),
+    };
     for (child, child_id) in children.iter_mut().zip(layout_children.iter().copied()) {
-      render_node(child, layout_results, child_id, canvas, transform)?;
+      render_node(
+        child,
+        layout_results,
+        child_id,
+        canvas,
+        transform,
+        child_container_size,
+      )?;
     }
   }
 

@@ -89,6 +89,10 @@ pub struct CalcFormula {
   em: f32,
   vh: f32,
   vw: f32,
+  cqh: f32,
+  cqw: f32,
+  cqmin: f32,
+  cqmax: f32,
   vmin: f32,
   vmax: f32,
   cm: f32,
@@ -156,6 +160,34 @@ impl CalcFormula {
     }
   }
 
+  fn cqh(value: f32) -> Self {
+    Self {
+      cqh: value,
+      ..Default::default()
+    }
+  }
+
+  fn cqw(value: f32) -> Self {
+    Self {
+      cqw: value,
+      ..Default::default()
+    }
+  }
+
+  fn cqmin(value: f32) -> Self {
+    Self {
+      cqmin: value,
+      ..Default::default()
+    }
+  }
+
+  fn cqmax(value: f32) -> Self {
+    Self {
+      cqmax: value,
+      ..Default::default()
+    }
+  }
+
   fn cm(value: f32) -> Self {
     Self {
       cm: value,
@@ -206,6 +238,10 @@ impl CalcFormula {
       em: -self.em,
       vh: -self.vh,
       vw: -self.vw,
+      cqh: -self.cqh,
+      cqw: -self.cqw,
+      cqmin: -self.cqmin,
+      cqmax: -self.cqmax,
       vmin: -self.vmin,
       vmax: -self.vmax,
       cm: -self.cm,
@@ -225,6 +261,10 @@ impl CalcFormula {
       em: self.em + rhs.em,
       vh: self.vh + rhs.vh,
       vw: self.vw + rhs.vw,
+      cqh: self.cqh + rhs.cqh,
+      cqw: self.cqw + rhs.cqw,
+      cqmin: self.cqmin + rhs.cqmin,
+      cqmax: self.cqmax + rhs.cqmax,
       vmin: self.vmin + rhs.vmin,
       vmax: self.vmax + rhs.vmax,
       cm: self.cm + rhs.cm,
@@ -244,6 +284,10 @@ impl CalcFormula {
       em: self.em - rhs.em,
       vh: self.vh - rhs.vh,
       vw: self.vw - rhs.vw,
+      cqh: self.cqh - rhs.cqh,
+      cqw: self.cqw - rhs.cqw,
+      cqmin: self.cqmin - rhs.cqmin,
+      cqmax: self.cqmax - rhs.cqmax,
       vmin: self.vmin - rhs.vmin,
       vmax: self.vmax - rhs.vmax,
       cm: self.cm - rhs.cm,
@@ -263,6 +307,10 @@ impl CalcFormula {
       em: self.em * factor,
       vh: self.vh * factor,
       vw: self.vw * factor,
+      cqh: self.cqh * factor,
+      cqw: self.cqw * factor,
+      cqmin: self.cqmin * factor,
+      cqmax: self.cqmax * factor,
       vmin: self.vmin * factor,
       vmax: self.vmax * factor,
       cm: self.cm * factor,
@@ -279,6 +327,10 @@ impl CalcFormula {
     let viewport_height = sizing.viewport.height.unwrap_or_default() as f32;
     let viewport_min = viewport_width.min(viewport_height);
     let viewport_max = viewport_width.max(viewport_height);
+    let container_width = sizing.query_container_width();
+    let container_height = sizing.query_container_height();
+    let container_min = container_width.min(container_height);
+    let container_max = container_width.max(container_height);
 
     CalcLinear {
       px: self.px * sizing.viewport.device_pixel_ratio
@@ -286,6 +338,10 @@ impl CalcFormula {
         + self.em * sizing.font_size
         + self.vh * viewport_height / 100.0
         + self.vw * viewport_width / 100.0
+        + self.cqh * container_height / 100.0
+        + self.cqw * container_width / 100.0
+        + self.cqmin * container_min / 100.0
+        + self.cqmax * container_max / 100.0
         + self.vmin * viewport_min / 100.0
         + self.vmax * viewport_max / 100.0
         + self.cm * ONE_CM_IN_PX * sizing.viewport.device_pixel_ratio
@@ -442,20 +498,20 @@ fn parse_calc_factor<'i>(input: &mut Parser<'i, '_>) -> ParseResult<'i, CalcValu
         "dvw" => Ok(CalcValue::Formula(CalcFormula::vw(*value))),
         "svw" => Ok(CalcValue::Formula(CalcFormula::vw(*value))),
         "lvw" => Ok(CalcValue::Formula(CalcFormula::vw(*value))),
-        "cqw" => Ok(CalcValue::Formula(CalcFormula::vw(*value))),
-        "cqi" => Ok(CalcValue::Formula(CalcFormula::vw(*value))),
+        "cqw" => Ok(CalcValue::Formula(CalcFormula::cqw(*value))),
+        "cqi" => Ok(CalcValue::Formula(CalcFormula::cqw(*value))),
         "vi" => Ok(CalcValue::Formula(CalcFormula::vw(*value))),
         "vh" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
         "dvh" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
         "svh" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
         "lvh" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
-        "cqh" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
-        "cqb" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
+        "cqh" => Ok(CalcValue::Formula(CalcFormula::cqh(*value))),
+        "cqb" => Ok(CalcValue::Formula(CalcFormula::cqh(*value))),
         "vb" => Ok(CalcValue::Formula(CalcFormula::vh(*value))),
         "vmin" => Ok(CalcValue::Formula(CalcFormula::vmin(*value))),
-        "cqmin" => Ok(CalcValue::Formula(CalcFormula::vmin(*value))),
+        "cqmin" => Ok(CalcValue::Formula(CalcFormula::cqmin(*value))),
         "vmax" => Ok(CalcValue::Formula(CalcFormula::vmax(*value))),
-        "cqmax" => Ok(CalcValue::Formula(CalcFormula::vmax(*value))),
+        "cqmax" => Ok(CalcValue::Formula(CalcFormula::cqmax(*value))),
         "cm" => Ok(CalcValue::Formula(CalcFormula::cm(*value))),
         "mm" => Ok(CalcValue::Formula(CalcFormula::mm(*value))),
         "in" => Ok(CalcValue::Formula(CalcFormula::inch(*value))),
@@ -493,6 +549,14 @@ pub enum Length<const DEFAULT_AUTO: bool = true> {
   Vh(f32),
   /// Vw value relative to the viewport width (0-100)
   Vw(f32),
+  /// Cqh value relative to the query container height (0-100)
+  CqH(f32),
+  /// Cqw value relative to the query container width (0-100)
+  CqW(f32),
+  /// Cqmin value relative to the query container smaller dimension (0-100)
+  CqMin(f32),
+  /// Cqmax value relative to the query container larger dimension (0-100)
+  CqMax(f32),
   /// Vmin value relative to the smaller viewport dimension (0-100)
   VMin(f32),
   /// Vmax value relative to the larger viewport dimension (0-100)
@@ -542,19 +606,19 @@ impl<const DEFAULT_AUTO: bool> TailwindPropertyParser for Length<DEFAULT_AUTO> {
       "dvw" => Some(Length::Vw(100.0)),
       "svw" => Some(Length::Vw(100.0)),
       "lvw" => Some(Length::Vw(100.0)),
-      "cqw" => Some(Length::Vw(100.0)),
-      "cqi" => Some(Length::Vw(100.0)),
+      "cqw" => Some(Length::CqW(100.0)),
+      "cqi" => Some(Length::CqW(100.0)),
       "vi" => Some(Length::Vw(100.0)),
       "dvh" => Some(Length::Vh(100.0)),
       "svh" => Some(Length::Vh(100.0)),
       "lvh" => Some(Length::Vh(100.0)),
-      "cqh" => Some(Length::Vh(100.0)),
-      "cqb" => Some(Length::Vh(100.0)),
+      "cqh" => Some(Length::CqH(100.0)),
+      "cqb" => Some(Length::CqH(100.0)),
       "vb" => Some(Length::Vh(100.0)),
       "vmin" => Some(Length::VMin(100.0)),
-      "cqmin" => Some(Length::VMin(100.0)),
+      "cqmin" => Some(Length::CqMin(100.0)),
       "vmax" => Some(Length::VMax(100.0)),
-      "cqmax" => Some(Length::VMax(100.0)),
+      "cqmax" => Some(Length::CqMax(100.0)),
       "px" => Some(Length::Px(1.0)),
       "full" => Some(Length::Percentage(100.0)),
       "3xs" => Some(Length::Rem(16.0)),
@@ -598,6 +662,10 @@ impl<const DEFAULT_AUTO: bool> Length<DEFAULT_AUTO> {
       Length::Em(v) => Length::Em(-v),
       Length::Vh(v) => Length::Vh(-v),
       Length::Vw(v) => Length::Vw(-v),
+      Length::CqH(v) => Length::CqH(-v),
+      Length::CqW(v) => Length::CqW(-v),
+      Length::CqMin(v) => Length::CqMin(-v),
+      Length::CqMax(v) => Length::CqMax(-v),
       Length::VMin(v) => Length::VMin(-v),
       Length::VMax(v) => Length::VMax(-v),
       Length::Cm(v) => Length::Cm(-v),
@@ -646,20 +714,20 @@ impl<'i, const DEFAULT_AUTO: bool> FromCss<'i> for Length<DEFAULT_AUTO> {
           "dvw" => Ok(Self::Vw(*value)),
           "svw" => Ok(Self::Vw(*value)),
           "lvw" => Ok(Self::Vw(*value)),
-          "cqw" => Ok(Self::Vw(*value)),
-          "cqi" => Ok(Self::Vw(*value)),
+          "cqw" => Ok(Self::CqW(*value)),
+          "cqi" => Ok(Self::CqW(*value)),
           "vi" => Ok(Self::Vw(*value)),
           "vh" => Ok(Self::Vh(*value)),
           "dvh" => Ok(Self::Vh(*value)),
           "svh" => Ok(Self::Vh(*value)),
           "lvh" => Ok(Self::Vh(*value)),
-          "cqh" => Ok(Self::Vh(*value)),
-          "cqb" => Ok(Self::Vh(*value)),
+          "cqh" => Ok(Self::CqH(*value)),
+          "cqb" => Ok(Self::CqH(*value)),
           "vb" => Ok(Self::Vh(*value)),
           "vmin" => Ok(Self::VMin(*value)),
-          "cqmin" => Ok(Self::VMin(*value)),
+          "cqmin" => Ok(Self::CqMin(*value)),
           "vmax" => Ok(Self::VMax(*value)),
-          "cqmax" => Ok(Self::VMax(*value)),
+          "cqmax" => Ok(Self::CqMax(*value)),
           "cm" => Ok(Self::Cm(*value)),
           "mm" => Ok(Self::Mm(*value)),
           "in" => Ok(Self::In(*value)),
@@ -690,6 +758,22 @@ impl<const DEFAULT_AUTO: bool> Length<DEFAULT_AUTO> {
       Length::Em(value) => value * sizing.font_size,
       Length::Vh(value) => value * sizing.viewport.height.unwrap_or_default() as f32 / 100.0,
       Length::Vw(value) => value * sizing.viewport.width.unwrap_or_default() as f32 / 100.0,
+      Length::CqH(value) => value * sizing.query_container_height() / 100.0,
+      Length::CqW(value) => value * sizing.query_container_width() / 100.0,
+      Length::CqMin(value) => {
+        value
+          * sizing
+            .query_container_width()
+            .min(sizing.query_container_height())
+          / 100.0
+      }
+      Length::CqMax(value) => {
+        value
+          * sizing
+            .query_container_width()
+            .max(sizing.query_container_height())
+          / 100.0
+      }
       Length::VMin(value) => {
         let viewport_width = sizing.viewport.width.unwrap_or_default() as f32;
         let viewport_height = sizing.viewport.height.unwrap_or_default() as f32;
@@ -725,6 +809,22 @@ impl<const DEFAULT_AUTO: bool> Length<DEFAULT_AUTO> {
       Length::Vw(value) => {
         CompactLength::length(sizing.viewport.width.unwrap_or_default() as f32 * value / 100.0)
       }
+      Length::CqH(value) => CompactLength::length(sizing.query_container_height() * value / 100.0),
+      Length::CqW(value) => CompactLength::length(sizing.query_container_width() * value / 100.0),
+      Length::CqMin(value) => CompactLength::length(
+        sizing
+          .query_container_width()
+          .min(sizing.query_container_height())
+          * value
+          / 100.0,
+      ),
+      Length::CqMax(value) => CompactLength::length(
+        sizing
+          .query_container_width()
+          .max(sizing.query_container_height())
+          * value
+          / 100.0,
+      ),
       Length::VMin(value) => {
         let viewport_width = sizing.viewport.width.unwrap_or_default() as f32;
         let viewport_height = sizing.viewport.height.unwrap_or_default() as f32;
@@ -773,6 +873,10 @@ impl<const DEFAULT_AUTO: bool> Length<DEFAULT_AUTO> {
         | Length::Percentage(_)
         | Length::Vh(_)
         | Length::Vw(_)
+        | Length::CqH(_)
+        | Length::CqW(_)
+        | Length::CqMin(_)
+        | Length::CqMax(_)
         | Length::VMin(_)
         | Length::VMax(_)
         | Length::Em(_)
@@ -829,6 +933,8 @@ impl<const DEFAULT_AUTO: bool> MakeComputed for Length<DEFAULT_AUTO> {
 mod tests {
   use std::rc::Rc;
 
+  use taffy::Size;
+
   use super::*;
   use crate::layout::Viewport;
 
@@ -840,6 +946,7 @@ mod tests {
         font_size: 16.0,
         device_pixel_ratio: 2.0,
       },
+      container_size: Size::NONE,
       font_size: 10.0,
       calc_arena: Rc::new(CalcArena::default()),
     }
@@ -990,19 +1097,19 @@ mod tests {
     assert_eq!(Length::<true>::from_str("12dvw"), Ok(Length::Vw(12.0)));
     assert_eq!(Length::<true>::from_str("12svw"), Ok(Length::Vw(12.0)));
     assert_eq!(Length::<true>::from_str("12lvw"), Ok(Length::Vw(12.0)));
-    assert_eq!(Length::<true>::from_str("12cqw"), Ok(Length::Vw(12.0)));
-    assert_eq!(Length::<true>::from_str("12cqi"), Ok(Length::Vw(12.0)));
+    assert_eq!(Length::<true>::from_str("12cqw"), Ok(Length::CqW(12.0)));
+    assert_eq!(Length::<true>::from_str("12cqi"), Ok(Length::CqW(12.0)));
     assert_eq!(Length::<true>::from_str("12vi"), Ok(Length::Vw(12.0)));
     assert_eq!(Length::<true>::from_str("12dvh"), Ok(Length::Vh(12.0)));
     assert_eq!(Length::<true>::from_str("12svh"), Ok(Length::Vh(12.0)));
     assert_eq!(Length::<true>::from_str("12lvh"), Ok(Length::Vh(12.0)));
-    assert_eq!(Length::<true>::from_str("12cqh"), Ok(Length::Vh(12.0)));
-    assert_eq!(Length::<true>::from_str("12cqb"), Ok(Length::Vh(12.0)));
+    assert_eq!(Length::<true>::from_str("12cqh"), Ok(Length::CqH(12.0)));
+    assert_eq!(Length::<true>::from_str("12cqb"), Ok(Length::CqH(12.0)));
     assert_eq!(Length::<true>::from_str("12vb"), Ok(Length::Vh(12.0)));
     assert_eq!(Length::<true>::from_str("12vmin"), Ok(Length::VMin(12.0)));
-    assert_eq!(Length::<true>::from_str("12cqmin"), Ok(Length::VMin(12.0)));
+    assert_eq!(Length::<true>::from_str("12cqmin"), Ok(Length::CqMin(12.0)));
     assert_eq!(Length::<true>::from_str("12vmax"), Ok(Length::VMax(12.0)));
-    assert_eq!(Length::<true>::from_str("12cqmax"), Ok(Length::VMax(12.0)));
+    assert_eq!(Length::<true>::from_str("12cqmax"), Ok(Length::CqMax(12.0)));
   }
 
   #[test]
@@ -1011,12 +1118,25 @@ mod tests {
     assert_eq!(
       parsed,
       Ok(Length::Calc(CalcHandle::Formula(CalcFormula {
-        vmax: 20.0,
-        vh: -2.0,
+        cqmax: 20.0,
+        cqh: -2.0,
         px: 5.0,
         ..Default::default()
       })))
     );
+  }
+
+  #[test]
+  fn cq_lengths_use_container_size() {
+    let mut sizing = sizing();
+    sizing.container_size = Size {
+      width: Some(80.0),
+      height: Some(40.0),
+    };
+    assert_near(Length::<true>::CqW(50.0).to_px(&sizing, 0.0), 40.0);
+    assert_near(Length::<true>::CqH(50.0).to_px(&sizing, 0.0), 20.0);
+    assert_near(Length::<true>::CqMin(50.0).to_px(&sizing, 0.0), 20.0);
+    assert_near(Length::<true>::CqMax(50.0).to_px(&sizing, 0.0), 40.0);
   }
 
   #[test]

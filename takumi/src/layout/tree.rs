@@ -128,7 +128,7 @@ fn push_layout_node<'r, 'g, N: Node<N>>(
     style: render_node
       .context
       .style
-      .to_taffy_style(&render_node.context),
+      .to_taffy_style(&render_node.context.sizing),
     cache: Cache::new(),
     unrounded_layout: Layout::new(),
     final_layout: Layout::new(),
@@ -143,11 +143,11 @@ fn push_layout_node<'r, 'g, N: Node<N>>(
   if let Some(children) = render_node.children.as_deref() {
     nodes.reserve(children.len());
     render_nodes.reserve(children.len());
-    nodes[node_index].children = Box::from_iter(
-      children
-        .iter()
-        .map(|child| push_layout_node(nodes, render_nodes, child)),
-    );
+    let mut child_ids = Vec::with_capacity(children.len());
+    for child in children {
+      child_ids.push(push_layout_node(nodes, render_nodes, child));
+    }
+    nodes[node_index].children = child_ids.into_boxed_slice();
   }
 
   node_id
@@ -203,6 +203,39 @@ impl<'r, 'g, N: Node<N>> LayoutTree<'r, 'g, N> {
     self
       .get_index(node_id)
       .and_then(|idx| self.nodes.get_mut(idx))
+  }
+
+  fn update_node_style_for_available_space(
+    &mut self,
+    node_id: NodeId,
+    available_space: Size<AvailableSpace>,
+    known_dimensions: Size<Option<f32>>,
+  ) {
+    let Some(idx) = self.get_index(node_id) else {
+      return;
+    };
+
+    let Some(render_node) = self.render_nodes.get(idx) else {
+      return;
+    };
+
+    let mut sizing = render_node.context.sizing.clone();
+    sizing.container_size = Size {
+      width: known_dimensions.width.or(match available_space.width {
+        AvailableSpace::Definite(value) => Some(value),
+        _ => None,
+      }),
+      height: known_dimensions.height.or(match available_space.height {
+        AvailableSpace::Definite(value) => Some(value),
+        _ => None,
+      }),
+    };
+
+    let style = render_node.context.style.to_taffy_style(&sizing);
+
+    if let Some(node) = self.nodes.get_mut(idx) {
+      node.style = style;
+    }
   }
 }
 
@@ -314,6 +347,12 @@ impl<N: Node<N>> LayoutPartialTree for LayoutTree<'_, '_, N> {
   }
 
   fn compute_child_layout(&mut self, node: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    self.update_node_style_for_available_space(
+      node,
+      inputs.available_space,
+      inputs.known_dimensions,
+    );
+
     if inputs.run_mode == RunMode::PerformHiddenLayout {
       return compute_hidden_layout(self, node);
     }
@@ -637,7 +676,7 @@ impl<'g, N: Node<N>> RenderNode<'g, N> {
     let mut render_context = RenderContext {
       global: parent_context.global,
       transform: parent_context.transform,
-      style,
+      style: Box::new(style),
       current_color,
       draw_debug_border: parent_context.draw_debug_border,
       fetched_resources: parent_context.fetched_resources.clone(),
@@ -647,15 +686,19 @@ impl<'g, N: Node<N>> RenderNode<'g, N> {
     };
 
     let children = node.take_children().map(|children| {
-      Box::from_iter(children.into_iter().map(|child| {
-        Self::from_node_impl(
+      let mut rendered_children = Vec::with_capacity(children.len());
+
+      for child in children.into_vec() {
+        rendered_children.push(Self::from_node_impl(
           &render_context,
           child,
           #[cfg(feature = "css_stylesheet_parsing")]
           matched_declarations,
           preorder_cursor,
-        )
-      }))
+        ));
+      }
+
+      rendered_children.into_boxed_slice()
     });
 
     let Some(mut children) = children else {
@@ -857,7 +900,7 @@ fn flush_inline_group<'g, N: Node<N>>(
   } else {
     final_children.push(RenderNode {
       context: RenderContext {
-        style: anonymous_box_style.clone(),
+        style: Box::new(anonymous_box_style.clone()),
         global: parent_render_context.global,
         transform: parent_render_context.transform,
         sizing: parent_render_context.sizing.clone(),

@@ -208,6 +208,8 @@ impl TailwindPropertyParser for VerticalAlign {
 mod tests {
   use std::rc::Rc;
 
+  use taffy::Size;
+
   use crate::layout::Viewport;
 
   use super::*;
@@ -220,6 +222,7 @@ mod tests {
         font_size: 16.0,
         device_pixel_ratio: 2.0,
       },
+      container_size: Size::NONE,
       font_size: 10.0,
       calc_arena: Rc::new(CalcArena::default()),
     }

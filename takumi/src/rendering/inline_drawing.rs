@@ -554,6 +554,10 @@ pub(crate) fn draw_inline_box<N: Node<N>>(
           inline_box.x + item.margin.left,
           inline_box.y + item.margin.top,
         ),
+      Size {
+        width: Some(inline_width),
+        height: Some(inline_height),
+      },
     )?;
     return Ok(());
   }

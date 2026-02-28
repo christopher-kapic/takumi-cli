@@ -691,6 +691,7 @@ mod tests {
     let viewport = Viewport::new(Some(100), Some(100));
     let sizing = Sizing {
       viewport,
+      container_size: Size::NONE,
       font_size: 16.0,
       calc_arena: Rc::new(CalcArena::default()),
     };
