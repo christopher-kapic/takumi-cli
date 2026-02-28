@@ -4,6 +4,8 @@ mod test_utils;
 pub mod animation;
 #[path = "fixtures/color_artifacts.rs"]
 pub mod color_artifacts;
+#[path = "fixtures/deep_nesting.rs"]
+pub mod deep_nesting;
 #[path = "fixtures/inline.rs"]
 pub mod inline;
 #[path = "fixtures/inline_vertical_align.rs"]

@@ -118,39 +118,84 @@ fn build_inherited_style(
 fn push_layout_node<'r, 'g, N: Node<N>>(
   nodes: &mut Vec<LayoutNodeState>,
   render_nodes: &mut Vec<&'r RenderNode<'g, N>>,
-  render_node: &'r RenderNode<'g, N>,
+  render_root: &'r RenderNode<'g, N>,
 ) -> NodeId {
-  let node_index = nodes.len();
-  let node_id = NodeId::from(node_index);
-  render_nodes.push(render_node);
-
-  nodes.push(LayoutNodeState {
-    style: render_node
-      .context
-      .style
-      .to_taffy_style(&render_node.context.sizing),
-    cache: Cache::new(),
-    unrounded_layout: Layout::new(),
-    final_layout: Layout::new(),
-    is_inline_children: render_node.should_create_inline_layout(),
-    children: Box::new([]),
-  });
-
-  if nodes[node_index].is_inline_children {
-    return node_id;
+  struct PendingNode<'r, 'g, N: Node<N>> {
+    node_id: NodeId,
+    next_child_index: usize,
+    children: Option<&'r [RenderNode<'g, N>]>,
+    child_ids: Vec<NodeId>,
   }
 
-  if let Some(children) = render_node.children.as_deref() {
-    nodes.reserve(children.len());
-    render_nodes.reserve(children.len());
-    let mut child_ids = Vec::with_capacity(children.len());
-    for child in children {
-      child_ids.push(push_layout_node(nodes, render_nodes, child));
+  fn push_node_state<'r, 'g, N: Node<N>>(
+    nodes: &mut Vec<LayoutNodeState>,
+    render_nodes: &mut Vec<&'r RenderNode<'g, N>>,
+    render_node: &'r RenderNode<'g, N>,
+  ) -> PendingNode<'r, 'g, N> {
+    let node_index = nodes.len();
+    let node_id = NodeId::from(node_index);
+    let is_inline_children = render_node.should_create_inline_layout();
+    let children = if is_inline_children {
+      None
+    } else {
+      render_node.children.as_deref()
+    };
+
+    render_nodes.push(render_node);
+
+    nodes.push(LayoutNodeState {
+      style: render_node
+        .context
+        .style
+        .to_taffy_style(&render_node.context.sizing),
+      cache: Cache::new(),
+      unrounded_layout: Layout::new(),
+      final_layout: Layout::new(),
+      is_inline_children,
+      children: Box::new([]),
+    });
+
+    PendingNode {
+      node_id,
+      next_child_index: 0,
+      children,
+      child_ids: Vec::with_capacity(children.map_or(0, <[RenderNode<'g, N>]>::len)),
     }
-    nodes[node_index].children = child_ids.into_boxed_slice();
   }
 
-  node_id
+  let root = push_node_state(nodes, render_nodes, render_root);
+  let root_id = root.node_id;
+  let mut stack = vec![root];
+
+  while let Some(current) = stack.last_mut() {
+    let Some(children) = current.children else {
+      let Some(finished) = stack.pop() else {
+        unreachable!();
+      };
+      if let Some(parent) = stack.last_mut() {
+        parent.child_ids.push(finished.node_id);
+      }
+      continue;
+    };
+
+    if let Some(child) = children.get(current.next_child_index) {
+      current.next_child_index += 1;
+      stack.push(push_node_state(nodes, render_nodes, child));
+      continue;
+    }
+
+    let Some(finished) = stack.pop() else {
+      unreachable!();
+    };
+    let node_index: usize = finished.node_id.into();
+    nodes[node_index].children = finished.child_ids.into_boxed_slice();
+
+    if let Some(parent) = stack.last_mut() {
+      parent.child_ids.push(finished.node_id);
+    }
+  }
+
+  root_id
 }
 
 impl<'r, 'g, N: Node<N>> LayoutTree<'r, 'g, N> {

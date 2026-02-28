@@ -4,7 +4,7 @@ use derive_builder::Builder;
 use image::RgbaImage;
 use parley::PositionedLayoutItem;
 use serde::Serialize;
-use taffy::{AvailableSpace, NodeId, geometry::Size};
+use taffy::{AvailableSpace, Layout, NodeId, TaffyError, geometry::Size};
 
 #[cfg(feature = "css_stylesheet_parsing")]
 use crate::layout::style::selector::StyleSheet;
@@ -31,6 +31,7 @@ use crate::{
 };
 
 #[derive(Clone, Builder)]
+#[builder(pattern = "owned")]
 /// Options for rendering a node. Construct using [`RenderOptionsBuilder`] to avoid breaking changes.
 pub struct RenderOptions<'g, N: Node<N>> {
   /// The viewport to render the node in.
@@ -82,6 +83,33 @@ pub struct MeasuredNode {
   pub runs: Vec<MeasuredTextRun>,
 }
 
+struct TraversalEnter {
+  path: Vec<usize>,
+  node_id: NodeId,
+  transform: Affine,
+  container_size: Size<Option<f32>>,
+}
+
+enum TraversalVisit<Exit> {
+  Enter(TraversalEnter),
+  Exit(Exit),
+}
+
+struct MeasureExit {
+  node_id: NodeId,
+  width: f32,
+  height: f32,
+  local_transform: Affine,
+  runs: Vec<MeasuredTextRun>,
+  child_ids: Vec<NodeId>,
+}
+
+struct RenderExit {
+  path: Vec<usize>,
+  has_constrain: bool,
+  original_canvas_image: Option<RgbaImage>,
+}
+
 /// Measures the layout of a node.
 pub fn measure_layout<'g, N: Node<N>>(options: RenderOptions<'g, N>) -> Result<MeasuredNode> {
   #[cfg(feature = "css_stylesheet_parsing")]
@@ -118,125 +146,208 @@ fn collect_measure_result<'g, Nodes: Node<Nodes>>(
   node: &mut RenderNode<'g, Nodes>,
   layout_results: &LayoutResults,
   node_id: NodeId,
-  mut transform: Affine,
+  transform: Affine,
   container_size: Size<Option<f32>>,
 ) -> Result<MeasuredNode> {
-  let layout = *layout_results.layout(node_id)?;
-  node.context.sizing.container_size = container_size;
+  let mut visits = vec![TraversalVisit::Enter(TraversalEnter {
+    path: Vec::new(),
+    node_id,
+    transform,
+    container_size,
+  })];
+  let mut measured_by_node_id: HashMap<usize, MeasuredNode> = HashMap::new();
 
-  transform *= Affine::translation(layout.location.x, layout.location.y);
+  while let Some(visit) = visits.pop() {
+    match visit {
+      TraversalVisit::Enter(TraversalEnter {
+        path,
+        node_id,
+        mut transform,
+        container_size,
+      }) => {
+        let Some(current) = get_node_mut_by_path(node, &path) else {
+          unreachable!()
+        };
+        let layout = *layout_results.layout(node_id)?;
+        current.context.sizing.container_size = container_size;
 
-  let mut local_transform = transform;
-  apply_transform(
-    &mut local_transform,
-    &node.context.style,
-    layout.size,
-    &node.context.sizing,
-  );
+        transform *= Affine::translation(layout.location.x, layout.location.y);
+        let mut local_transform = transform;
+        apply_transform(
+          &mut local_transform,
+          &current.context.style,
+          layout.size,
+          &current.context.sizing,
+        );
 
-  let mut children = Vec::new();
-  let mut runs = Vec::new();
+        let mut children = Vec::new();
+        let mut runs = Vec::new();
 
-  // Handle inline layout
-  if node.should_create_inline_layout() {
-    let font_style = node.context.style.to_sized_font_style(&node.context);
-    let parent_x_height = get_parent_x_height(&node.context, &font_style);
-    let (max_width, max_height) = create_inline_constraint(
-      &node.context,
-      Size {
-        width: AvailableSpace::Definite(layout.content_box_width()),
-        height: AvailableSpace::Definite(layout.content_box_height()),
-      },
-      Size::NONE,
-    );
+        if current.should_create_inline_layout() {
+          let font_style = current.context.style.to_sized_font_style(&current.context);
+          let parent_x_height = get_parent_x_height(&current.context, &font_style);
+          let (max_width, max_height) = create_inline_constraint(
+            &current.context,
+            Size {
+              width: AvailableSpace::Definite(layout.content_box_width()),
+              height: AvailableSpace::Definite(layout.content_box_height()),
+            },
+            Size::NONE,
+          );
 
-    let (inline_layout, text, spans) = create_inline_layout(
-      collect_inline_items(node).into_iter(),
-      Size {
-        width: AvailableSpace::Definite(layout.content_box_width()),
-        height: AvailableSpace::Definite(layout.content_box_height()),
-      },
-      max_width,
-      max_height,
-      &font_style,
-      node.context.global,
-      InlineLayoutStage::Measure,
-    );
+          let (inline_layout, text, spans) = create_inline_layout(
+            collect_inline_items(current).into_iter(),
+            Size {
+              width: AvailableSpace::Definite(layout.content_box_width()),
+              height: AvailableSpace::Definite(layout.content_box_height()),
+            },
+            max_width,
+            max_height,
+            &font_style,
+            current.context.global,
+            InlineLayoutStage::Measure,
+          );
 
-    for line in inline_layout.lines() {
-      for item in line.items() {
-        match item {
-          PositionedLayoutItem::GlyphRun(glyph_run) => {
-            let text_range = glyph_run.run().text_range();
-            let text = &text[text_range];
-            // Find the corresponding text span
-            let run = glyph_run.run();
-            let metrics = run.metrics();
+          for line in inline_layout.lines() {
+            for item in line.items() {
+              match item {
+                PositionedLayoutItem::GlyphRun(glyph_run) => {
+                  let text_range = glyph_run.run().text_range();
+                  let text = &text[text_range];
+                  let run = glyph_run.run();
+                  let metrics = run.metrics();
 
-            runs.push(MeasuredTextRun {
-              text: text.to_string(),
-              x: glyph_run.offset(),
-              y: glyph_run.baseline() - metrics.ascent,
-              width: glyph_run.advance(),
-              height: metrics.ascent + metrics.descent,
-            });
-          }
-          PositionedLayoutItem::InlineBox(mut positioned_box) => {
-            let item_index = positioned_box.id as usize;
-            if let Some(ProcessedInlineSpan::Box(item)) = spans.get(item_index) {
-              item.vertical_align.apply(
-                &mut positioned_box.y,
-                line.metrics(),
-                positioned_box.height,
-                parent_x_height,
-              );
+                  runs.push(MeasuredTextRun {
+                    text: text.to_string(),
+                    x: glyph_run.offset(),
+                    y: glyph_run.baseline() - metrics.ascent,
+                    width: glyph_run.advance(),
+                    height: metrics.ascent + metrics.descent,
+                  });
+                }
+                PositionedLayoutItem::InlineBox(mut positioned_box) => {
+                  let item_index = positioned_box.id as usize;
+                  if let Some(ProcessedInlineSpan::Box(item)) = spans.get(item_index) {
+                    item.vertical_align.apply(
+                      &mut positioned_box.y,
+                      line.metrics(),
+                      positioned_box.height,
+                      parent_x_height,
+                    );
+                  }
+
+                  let inline_transform =
+                    Affine::translation(positioned_box.x, positioned_box.y) * local_transform;
+
+                  children.push(MeasuredNode {
+                    width: positioned_box.width,
+                    height: positioned_box.height,
+                    transform: inline_transform.to_cols_array(),
+                    children: Vec::new(),
+                    runs: Vec::new(),
+                  });
+                }
+              }
             }
-
-            let inline_transform =
-              Affine::translation(positioned_box.x, positioned_box.y) * local_transform;
-
-            children.push(MeasuredNode {
-              width: positioned_box.width,
-              height: positioned_box.height,
-              transform: inline_transform.to_cols_array(),
-              children: Vec::new(),
-              runs: Vec::new(),
-            });
           }
+
+          measured_by_node_id.insert(
+            usize::from(node_id),
+            create_measured_node(layout, local_transform, children, runs),
+          );
+          continue;
+        }
+
+        let Some(render_children) = current.children.as_deref() else {
+          measured_by_node_id.insert(
+            usize::from(node_id),
+            create_measured_node(layout, local_transform, children, runs),
+          );
+          continue;
+        };
+
+        let child_ids = collect_child_node_ids(layout_results, node_id, render_children.len())?;
+        if child_ids.is_empty() {
+          measured_by_node_id.insert(
+            usize::from(node_id),
+            create_measured_node(layout, local_transform, children, runs),
+          );
+          continue;
+        }
+
+        let child_container_size = Size {
+          width: Some(layout.content_box_width()),
+          height: Some(layout.content_box_height()),
+        };
+
+        visits.push(TraversalVisit::Exit(MeasureExit {
+          node_id,
+          width: layout.size.width,
+          height: layout.size.height,
+          local_transform,
+          runs,
+          child_ids: child_ids.clone(),
+        }));
+
+        for (index, child_id) in child_ids.iter().copied().enumerate().rev() {
+          let mut child_path = path.clone();
+          child_path.push(index);
+          visits.push(TraversalVisit::Enter(TraversalEnter {
+            path: child_path,
+            node_id: child_id,
+            transform: local_transform,
+            container_size: child_container_size,
+          }));
         }
       }
-    }
-  }
-
-  if !node.should_create_inline_layout()
-    && let Some(render_children) = node.children.as_deref_mut()
-  {
-    let layout_children = layout_results.children(node_id)?;
-    let child_container_size = Size {
-      width: Some(layout.content_box_width()),
-      height: Some(layout.content_box_height()),
-    };
-    for (child, child_id) in render_children
-      .iter_mut()
-      .zip(layout_children.iter().copied())
-    {
-      children.push(collect_measure_result(
-        child,
-        layout_results,
-        child_id,
+      TraversalVisit::Exit(MeasureExit {
+        node_id,
+        width,
+        height,
         local_transform,
-        child_container_size,
-      )?);
-    }
+        runs,
+        child_ids,
+      }) => {
+        let mut children = Vec::with_capacity(child_ids.len());
+        for child_id in child_ids {
+          let Some(child) = measured_by_node_id.remove(&usize::from(child_id)) else {
+            unreachable!()
+          };
+          children.push(child);
+        }
+
+        measured_by_node_id.insert(
+          usize::from(node_id),
+          MeasuredNode {
+            width,
+            height,
+            transform: local_transform.to_cols_array(),
+            children,
+            runs,
+          },
+        );
+      }
+    };
   }
 
-  Ok(MeasuredNode {
+  measured_by_node_id
+    .remove(&usize::from(node_id))
+    .ok_or_else(|| Error::LayoutError(TaffyError::InvalidInputNode(node_id)))
+}
+
+fn create_measured_node(
+  layout: Layout,
+  local_transform: Affine,
+  children: Vec<MeasuredNode>,
+  runs: Vec<MeasuredTextRun>,
+) -> MeasuredNode {
+  MeasuredNode {
     width: layout.size.width,
     height: layout.size.height,
     transform: local_transform.to_cols_array(),
     children,
     runs,
-  })
+  }
 }
 
 /// Renders a node to an image.
@@ -279,7 +390,8 @@ pub fn render<'g, N: Node<N>>(options: RenderOptions<'g, N>) -> Result<RgbaImage
 
   let mut canvas = Canvas::new(root_size);
 
-  root.render(
+  render_node(
+    &mut root,
     &layout_results,
     root_node_id,
     &mut canvas,
@@ -291,26 +403,6 @@ pub fn render<'g, N: Node<N>>(options: RenderOptions<'g, N>) -> Result<RgbaImage
   )?;
 
   Ok(canvas.into_inner())
-}
-
-impl<'g, Nodes: Node<Nodes>> RenderNode<'g, Nodes> {
-  pub(crate) fn render(
-    &mut self,
-    layout_results: &LayoutResults,
-    node_id: NodeId,
-    canvas: &mut Canvas,
-    transform: Affine,
-    container_size: Size<Option<f32>>,
-  ) -> Result<()> {
-    render_node(
-      self,
-      layout_results,
-      node_id,
-      canvas,
-      transform,
-      container_size,
-    )
-  }
 }
 
 fn apply_transform(
@@ -353,160 +445,233 @@ fn apply_transform(
   *transform *= local;
 }
 
+fn get_node_mut_by_path<'a, 'g, Nodes: Node<Nodes>>(
+  root: &'a mut RenderNode<'g, Nodes>,
+  path: &[usize],
+) -> Option<&'a mut RenderNode<'g, Nodes>> {
+  let mut current = root;
+  for &index in path {
+    let children = current.children.as_deref_mut()?;
+    current = children.get_mut(index)?;
+  }
+  Some(current)
+}
+
+fn collect_child_node_ids(
+  layout_results: &LayoutResults,
+  node_id: NodeId,
+  render_child_len: usize,
+) -> Result<Vec<NodeId>> {
+  let layout_children = layout_results.children(node_id)?;
+  let child_count = render_child_len.min(layout_children.len());
+  Ok(
+    layout_children
+      .iter()
+      .copied()
+      .take(child_count)
+      .collect::<Vec<_>>(),
+  )
+}
+
 pub(crate) fn render_node<'g, Nodes: Node<Nodes>>(
   node: &mut RenderNode<'g, Nodes>,
   layout_results: &LayoutResults,
   node_id: NodeId,
   canvas: &mut Canvas,
-  mut transform: Affine,
+  transform: Affine,
   container_size: Size<Option<f32>>,
 ) -> Result<()> {
-  let layout = *layout_results.layout(node_id)?;
+  fn finish_node_render<'g, Nodes: Node<Nodes>>(
+    node: &mut RenderNode<'g, Nodes>,
+    canvas: &mut Canvas,
+    has_constrain: bool,
+    original_canvas_image: Option<RgbaImage>,
+  ) -> Result<()> {
+    let opacity_filter =
+      (node.context.style.opacity.0 < 1.0).then_some(Filter::Opacity(node.context.style.opacity));
 
-  if node.context.style.is_invisible() {
-    return Ok(());
-  }
-
-  node.context.sizing.container_size = container_size;
-
-  transform *= Affine::translation(layout.location.x, layout.location.y);
-
-  apply_transform(
-    &mut transform,
-    &node.context.style,
-    layout.size,
-    &node.context.sizing,
-  );
-
-  // If a transform function causes the current transformation matrix of an object to be non-invertible, the object and its content do not get displayed.
-  // https://drafts.csswg.org/css-transforms/#transform-function-lists
-  if !transform.is_invertible() {
-    return Ok(());
-  }
-
-  node.context.transform = transform;
-
-  // Normal rendering path (no filters requiring node-level rendering)
-  let constrain = CanvasConstrain::from_node(
-    &node.context,
-    &node.context.style,
-    layout,
-    transform,
-    &mut canvas.mask_memory,
-    &mut canvas.buffer_pool,
-  )?;
-
-  // Skip rendering if the node is not visible
-  if matches!(constrain, CanvasConstrainResult::SkipRendering) {
-    return Ok(());
-  }
-
-  let has_constrain = constrain.is_some();
-
-  // Apply backdrop-filter effects to the area behind this element
-  if !node.context.style.backdrop_filter.is_empty() {
-    let border = BorderProperties::from_context(&node.context, layout.size, layout.border);
-
-    apply_backdrop_filter(canvas, border, layout.size, transform, &node.context)?;
-  }
-
-  // If isolated canvas is required, replace the current canvas with a new one.
-  // Make sure to merge the image back!
-  let should_isolate = node.context.style.is_isolated()
-    || node
-      .context
-      .style
-      .has_non_identity_transform(layout.size, &node.context.sizing);
-
-  let original_canvas_image = if should_isolate {
-    Some(canvas.replace_new_image()?)
-  } else {
-    None
-  };
-
-  match constrain {
-    CanvasConstrainResult::None => {
-      node.draw_shell(canvas, layout)?;
-    }
-    CanvasConstrainResult::Some(constrain) => match constrain {
-      CanvasConstrain::ClipPath { .. } | CanvasConstrain::MaskImage { .. } => {
-        canvas.push_constrain(constrain);
-        node.draw_shell(canvas, layout)?;
-      }
-      CanvasConstrain::Overflow { .. } => {
-        node.draw_shell(canvas, layout)?;
-        canvas.push_constrain(constrain);
-      }
-    },
-    CanvasConstrainResult::SkipRendering => unreachable!(),
-  }
-
-  node.draw_content(canvas, layout)?;
-
-  if node.context.draw_debug_border {
-    draw_debug_border(canvas, layout, transform);
-  }
-
-  let should_create_inline = node.should_create_inline_layout();
-
-  if should_create_inline {
-    node.draw_inline(canvas, layout)?;
-  } else if let Some(children) = node.children.as_deref_mut() {
-    let layout_children = layout_results.children(node_id)?;
-    let child_container_size = Size {
-      width: Some(layout.content_box_width()),
-      height: Some(layout.content_box_height()),
-    };
-    for (child, child_id) in children.iter_mut().zip(layout_children.iter().copied()) {
-      render_node(
-        child,
-        layout_results,
-        child_id,
-        canvas,
-        transform,
-        child_container_size,
+    if !node.context.style.filter.is_empty() || opacity_filter.is_some() {
+      apply_filters(
+        &mut canvas.image,
+        &node.context.sizing,
+        node.context.current_color,
+        &mut canvas.buffer_pool,
+        node
+          .context
+          .style
+          .filter
+          .iter()
+          .chain(opacity_filter.iter()),
       )?;
     }
+
+    if let Some(mut source_canvas_image) = original_canvas_image {
+      overlay_image(
+        &mut source_canvas_image,
+        &canvas.image,
+        BorderProperties::zero(),
+        Affine::IDENTITY,
+        ImageScalingAlgorithm::Auto,
+        node.context.style.mix_blend_mode,
+        &[],
+        &mut canvas.mask_memory,
+        &mut canvas.buffer_pool,
+      );
+
+      let isolated_image = replace(&mut canvas.image, source_canvas_image);
+      canvas.buffer_pool.release_image(isolated_image);
+    }
+
+    if has_constrain {
+      canvas.pop_constrain();
+    }
+
+    Ok(())
   }
 
-  let opacity_filter =
-    (node.context.style.opacity.0 < 1.0).then_some(Filter::Opacity(node.context.style.opacity));
+  let mut visits = vec![TraversalVisit::Enter(TraversalEnter {
+    path: Vec::new(),
+    node_id,
+    transform,
+    container_size,
+  })];
 
-  if !node.context.style.filter.is_empty() || opacity_filter.is_some() {
-    apply_filters(
-      &mut canvas.image,
-      &node.context.sizing,
-      node.context.current_color,
-      &mut canvas.buffer_pool,
-      node
-        .context
-        .style
-        .filter
-        .iter()
-        .chain(opacity_filter.iter()),
-    )?;
-  }
+  while let Some(visit) = visits.pop() {
+    match visit {
+      TraversalVisit::Enter(TraversalEnter {
+        path,
+        node_id,
+        mut transform,
+        container_size,
+      }) => {
+        let Some(current) = get_node_mut_by_path(node, &path) else {
+          unreachable!()
+        };
+        let layout = *layout_results.layout(node_id)?;
 
-  // If there was an isolated canvas, composite the filtered image back into the original canvas
-  if let Some(mut original_canvas_image) = original_canvas_image {
-    overlay_image(
-      &mut original_canvas_image,
-      &canvas.image,
-      BorderProperties::zero(),
-      Affine::IDENTITY,
-      ImageScalingAlgorithm::Auto,
-      node.context.style.mix_blend_mode,
-      &[],
-      &mut canvas.mask_memory,
-      &mut canvas.buffer_pool,
-    );
+        if current.context.style.is_invisible() {
+          continue;
+        }
 
-    let isolated_image = replace(&mut canvas.image, original_canvas_image);
-    canvas.buffer_pool.release_image(isolated_image);
-  }
+        current.context.sizing.container_size = container_size;
+        transform *= Affine::translation(layout.location.x, layout.location.y);
+        apply_transform(
+          &mut transform,
+          &current.context.style,
+          layout.size,
+          &current.context.sizing,
+        );
 
-  if has_constrain {
-    canvas.pop_constrain();
+        if !transform.is_invertible() {
+          continue;
+        }
+
+        current.context.transform = transform;
+
+        let constrain = CanvasConstrain::from_node(
+          &current.context,
+          &current.context.style,
+          layout,
+          transform,
+          &mut canvas.mask_memory,
+          &mut canvas.buffer_pool,
+        )?;
+
+        if matches!(constrain, CanvasConstrainResult::SkipRendering) {
+          continue;
+        }
+
+        let has_constrain = constrain.is_some();
+
+        if !current.context.style.backdrop_filter.is_empty() {
+          let border = BorderProperties::from_context(&current.context, layout.size, layout.border);
+          apply_backdrop_filter(canvas, border, layout.size, transform, &current.context)?;
+        }
+
+        let should_isolate = current.context.style.is_isolated()
+          || current
+            .context
+            .style
+            .has_non_identity_transform(layout.size, &current.context.sizing);
+        let original_canvas_image = if should_isolate {
+          Some(canvas.replace_new_image()?)
+        } else {
+          None
+        };
+
+        match constrain {
+          CanvasConstrainResult::None => {
+            current.draw_shell(canvas, layout)?;
+          }
+          CanvasConstrainResult::Some(constrain) => match constrain {
+            CanvasConstrain::ClipPath { .. } | CanvasConstrain::MaskImage { .. } => {
+              canvas.push_constrain(constrain);
+              current.draw_shell(canvas, layout)?;
+            }
+            CanvasConstrain::Overflow { .. } => {
+              current.draw_shell(canvas, layout)?;
+              canvas.push_constrain(constrain);
+            }
+          },
+          CanvasConstrainResult::SkipRendering => unreachable!(),
+        }
+
+        current.draw_content(canvas, layout)?;
+
+        if current.context.draw_debug_border {
+          draw_debug_border(canvas, layout, transform);
+        }
+
+        if current.should_create_inline_layout() {
+          current.draw_inline(canvas, layout)?;
+          finish_node_render(current, canvas, has_constrain, original_canvas_image)?;
+          continue;
+        }
+
+        let Some(children) = current.children.as_deref() else {
+          finish_node_render(current, canvas, has_constrain, original_canvas_image)?;
+          continue;
+        };
+
+        let child_ids = collect_child_node_ids(layout_results, node_id, children.len())?;
+        if child_ids.is_empty() {
+          finish_node_render(current, canvas, has_constrain, original_canvas_image)?;
+          continue;
+        }
+
+        visits.push(TraversalVisit::Exit(RenderExit {
+          path: path.clone(),
+          has_constrain,
+          original_canvas_image,
+        }));
+
+        let child_container_size = Size {
+          width: Some(layout.content_box_width()),
+          height: Some(layout.content_box_height()),
+        };
+
+        for (index, child_id) in child_ids.into_iter().enumerate().rev() {
+          let mut child_path = path.clone();
+          child_path.push(index);
+          visits.push(TraversalVisit::Enter(TraversalEnter {
+            path: child_path,
+            node_id: child_id,
+            transform,
+            container_size: child_container_size,
+          }));
+        }
+      }
+      TraversalVisit::Exit(RenderExit {
+        path,
+        has_constrain,
+        original_canvas_image,
+      }) => {
+        let Some(current) = get_node_mut_by_path(node, &path) else {
+          unreachable!()
+        };
+        finish_node_render(current, canvas, has_constrain, original_canvas_image)?;
+      }
+    };
   }
 
   Ok(())

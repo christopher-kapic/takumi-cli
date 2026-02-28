@@ -82,3 +82,18 @@ impl<Nodes: Node<Nodes>> Default for ContainerNode<Nodes> {
     }
   }
 }
+
+// Avoid stack overflow in deep recursive nodes.
+impl<Nodes: Node<Nodes>> Drop for ContainerNode<Nodes> {
+  fn drop(&mut self) {
+    let mut stack = Vec::new();
+    if let Some(children) = self.children.take() {
+      stack.extend(children.into_vec());
+    }
+    while let Some(mut child) = stack.pop() {
+      if let Some(grandchildren) = child.take_children() {
+        stack.extend(grandchildren.into_vec());
+      }
+    }
+  }
+}
