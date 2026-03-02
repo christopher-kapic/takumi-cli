@@ -19,7 +19,7 @@ pub(crate) mod renderer;
 
 use std::{fmt::Display, ops::Deref};
 
-use napi::{De, Env, Error, JsValue, bindgen_prelude::*};
+use napi::{De, Env, Error, bindgen_prelude::*};
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use takumi::parley::FontStyle;
 
@@ -47,38 +47,61 @@ impl<'de> Deserialize<'de> for FontStyleInput {
 }
 
 fn buffer_from_object(env: Env, value: Object) -> Result<Buffer> {
-  if let Ok(buffer) = unsafe { ArrayBuffer::from_napi_value(env.raw(), value.raw()) } {
-    return Ok((*buffer).into());
+  if value.is_buffer()? {
+    let buffer = unsafe { BufferSlice::from_napi_value(env.raw(), value.raw()) }?;
+    return buffer.into_buffer(&env);
   }
 
-  unsafe { Buffer::from_napi_value(env.raw(), value.raw()) }
+  let bytes = buffer_slice_from_object(env, value)?;
+  Ok(Buffer::from(bytes.as_ref().to_vec()))
 }
 
 pub(crate) enum BufferOrSlice<'env> {
   ArrayBuffer(ArrayBuffer<'env>),
-  Slice(BufferSlice<'env>),
+  Buffer(BufferSlice<'env>),
+  Uint8Array(Uint8ArraySlice<'env>),
 }
 
-impl<'env> Deref for BufferOrSlice<'env> {
+impl AsRef<[u8]> for BufferOrSlice<'_> {
+  fn as_ref(&self) -> &[u8] {
+    match self {
+      BufferOrSlice::ArrayBuffer(buffer) => buffer,
+      BufferOrSlice::Buffer(buffer) => buffer,
+      BufferOrSlice::Uint8Array(buffer) => buffer,
+    }
+  }
+}
+
+impl Deref for BufferOrSlice<'_> {
   type Target = [u8];
 
   fn deref(&self) -> &Self::Target {
-    match self {
-      BufferOrSlice::ArrayBuffer(buffer) => buffer,
-      BufferOrSlice::Slice(buffer) => buffer,
-    }
+    self.as_ref()
   }
 }
 
 pub(crate) fn buffer_slice_from_object<'env>(
   env: Env,
-  value: Object,
+  value: Object<'env>,
 ) -> Result<BufferOrSlice<'env>> {
-  if let Ok(buffer) = unsafe { ArrayBuffer::from_napi_value(env.raw(), value.raw()) } {
+  if value.is_buffer()? {
+    let buffer = unsafe { BufferSlice::from_napi_value(env.raw(), value.raw()) }?;
+    return Ok(BufferOrSlice::Buffer(buffer));
+  }
+
+  if value.is_arraybuffer()? {
+    let buffer = unsafe { ArrayBuffer::from_napi_value(env.raw(), value.raw()) }?;
     return Ok(BufferOrSlice::ArrayBuffer(buffer));
   }
 
-  unsafe { BufferSlice::from_napi_value(env.raw(), value.raw()).map(BufferOrSlice::Slice) }
+  if value.is_typedarray()? {
+    let buffer = unsafe { Uint8ArraySlice::from_napi_value(env.raw(), value.raw()) }?;
+    return Ok(BufferOrSlice::Uint8Array(buffer));
+  }
+
+  Err(Error::from_reason(
+    "Expected Buffer, ArrayBuffer, or Uint8Array".to_owned(),
+  ))
 }
 
 pub(crate) fn deserialize_with_tracing<T: DeserializeOwned>(value: Object) -> Result<T> {
