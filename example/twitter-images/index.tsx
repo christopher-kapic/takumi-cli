@@ -18,15 +18,8 @@ const components = [
 
 type Component = (typeof components)[number];
 
-async function render(
-  module: Component,
-  ratio = 1,
-  format: OutputFormat = "png",
-) {
-  const { node, stylesheets } = await fromJsx(<module.default />);
-
-  const prepareStart = performance.now();
-  const renderer = new Renderer({
+async function createRenderer(module: Component) {
+  return new Renderer({
     persistentImages: module.persistentImages,
     fonts:
       module.fonts.length > 0
@@ -37,7 +30,16 @@ async function render(
           )
         : undefined,
   });
+}
 
+async function render(
+  renderer: Renderer,
+  module: Component,
+  ratio = 1,
+  format: OutputFormat = "png",
+) {
+  const jsxPrepareStart = performance.now();
+  const { node, stylesheets } = await fromJsx(<module.default />);
   const renderStart = performance.now();
 
   const buffer = await renderer.render(node, {
@@ -50,9 +52,12 @@ async function render(
   });
 
   const end = performance.now();
+  const jsxPrepareMs = Math.round(renderStart - jsxPrepareStart);
+  const renderMs = Math.round(end - renderStart);
+  const totalMs = Math.round(end - jsxPrepareStart);
 
   console.log(
-    `Rendered ${module.name} ${ratio}x in ${Math.round(end - prepareStart)}ms (prepare: ${Math.round(renderStart - prepareStart)}ms, render: ${Math.round(end - renderStart)}ms)`,
+    `Rendered ${module.name} ${ratio}x in ${totalMs}ms (jsx prepare: ${jsxPrepareMs}ms, render: ${renderMs}ms)`,
   );
 
   const fileName =
@@ -64,6 +69,14 @@ async function render(
 }
 
 for (const component of components) {
-  await render(component);
-  await render(component, 2, "webp");
+  const rendererPrepareStart = performance.now();
+  const renderer = await createRenderer(component);
+  const rendererPrepareMs = Math.round(
+    performance.now() - rendererPrepareStart,
+  );
+
+  console.log(`Prepared ${component.name} renderer in ${rendererPrepareMs}ms`);
+
+  await render(renderer, component);
+  await render(renderer, component, 2, "webp");
 }
