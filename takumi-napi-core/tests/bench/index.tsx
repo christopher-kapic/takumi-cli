@@ -74,12 +74,24 @@ summary(() => {
     });
   });
 
-  bench("createNode + render (webp)", async () => {
+  bench("createNode + render (webp 75%)", async () => {
     const { node, stylesheets } = await createNode();
     return renderer.render(node, {
       width: 1200,
       height: 630,
       format: "webp",
+      quality: 75,
+      stylesheets,
+    });
+  });
+
+  bench("createNode + render (webp 100%)", async () => {
+    const { node, stylesheets } = await createNode();
+    return renderer.render(node, {
+      width: 1200,
+      height: 630,
+      format: "webp",
+      quality: 100,
       stylesheets,
     });
   });

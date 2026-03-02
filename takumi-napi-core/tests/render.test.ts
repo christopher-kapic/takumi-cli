@@ -121,10 +121,21 @@ describe("render", () => {
     ],
   };
 
-  test("webp", async () => {
+  test("webp 75% Quality", async () => {
     const result = await renderer.render(node, {
       ...options,
       format: "webp",
+      quality: 75,
+    });
+
+    expect(result).toBeInstanceOf(Buffer);
+  });
+
+  test("webp 100% Quality", async () => {
+    const result = await renderer.render(node, {
+      ...options,
+      format: "webp",
+      quality: 100,
     });
 
     expect(result).toBeInstanceOf(Buffer);

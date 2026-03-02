@@ -1,5 +1,8 @@
 use std::{borrow::Cow, io::Write};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::Error as IoStdError;
+
 use image::{ExtendedColorType, ImageEncoder, ImageFormat, RgbaImage, codecs::jpeg::JpegEncoder};
 use png::{ColorType, Compression, Filter};
 use serde::Deserialize;
@@ -84,6 +87,57 @@ fn has_any_alpha_pixel(image: &RgbaImage) -> bool {
     .any(|[_, _, _, a]| *a != u8::MAX)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn write_webp(image: &RgbaImage, destination: &mut impl Write, quality: Option<u8>) -> Result<()> {
+  use webp::{Encoder as WebpEncoder, WebPConfig};
+
+  let requested_quality = quality.unwrap_or(100).clamp(0, 100);
+  let is_lossless = requested_quality == 100;
+
+  let mut config =
+    WebPConfig::new().map_err(|_| IoError(IoStdError::other("Failed to construct WebP config")))?;
+  config.lossless = if is_lossless { 1 } else { 0 };
+  config.alpha_compression = if is_lossless { 0 } else { 1 };
+  config.method = 0;
+  config.quality = if is_lossless {
+    75.0
+  } else {
+    requested_quality as f32
+  };
+
+  let encoded = WebpEncoder::from_rgba(image.as_raw(), image.width(), image.height())
+    .encode_advanced(&config)
+    .map_err(|error| IoError(IoStdError::other(format!("WebP encode error: {error:?}"))))?;
+
+  destination.write_all(&encoded)?;
+  Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_webp(image: &RgbaImage, destination: &mut impl Write, _quality: Option<u8>) -> Result<()> {
+  let encoder = WebPEncoder::new(destination);
+  let has_alpha = has_any_alpha_pixel(image);
+
+  let image_data = if has_alpha {
+    Cow::Borrowed(image.as_raw())
+  } else {
+    Cow::Owned(strip_alpha_channel(image))
+  };
+
+  encoder.encode(
+    &image_data,
+    image.width(),
+    image.height(),
+    if has_alpha {
+      image_webp::ColorType::Rgba8
+    } else {
+      image_webp::ColorType::Rgb8
+    },
+  )?;
+
+  Ok(())
+}
+
 /// Writes a single rendered image to `destination` using `format`.
 pub fn write_image<T: Write>(
   image: &RgbaImage,
@@ -133,26 +187,7 @@ pub fn write_image<T: Write>(
       writer.finish()?;
     }
     ImageOutputFormat::WebP => {
-      let encoder = WebPEncoder::new(destination);
-
-      let has_alpha = has_any_alpha_pixel(image);
-
-      let image_data = if has_alpha {
-        Cow::Borrowed(image.as_raw())
-      } else {
-        Cow::Owned(strip_alpha_channel(image))
-      };
-
-      encoder.encode(
-        &image_data,
-        image.width(),
-        image.height(),
-        if has_alpha {
-          image_webp::ColorType::Rgba8
-        } else {
-          image_webp::ColorType::Rgb8
-        },
-      )?;
+      write_webp(image, destination, quality)?;
     }
   }
 
