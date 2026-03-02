@@ -468,10 +468,14 @@ fn text_stroke_black_red() {
     tw: None,
     style: Some(
       StyleBuilder::default()
+        .width(Percentage(100.0))
+        .height(Percentage(100.0))
         .background_color(ColorInput::Value(Color([240, 240, 240, 255])))
         .color(ColorInput::Value(Color([0, 0, 0, 255]))) // Black text
-        .font_size(Some(Px(72.0)))
-        .webkit_text_stroke_width(Some(Px(2.0)))
+        .font_size(Some(Px(96.0)))
+        .font_weight(FontWeight::from(700.0))
+        .padding(Sides([Px(24.0); 4]))
+        .webkit_text_stroke_width(Some(Px(4.0)))
         .webkit_text_stroke_color(Some(ColorInput::Value(Color([255, 0, 0, 255])))) // Red stroke
         .build()
         .unwrap(),
