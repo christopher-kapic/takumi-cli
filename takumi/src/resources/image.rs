@@ -142,14 +142,78 @@ pub(crate) fn is_svg_like(src: &str) -> bool {
 }
 
 #[cfg(feature = "svg")]
+fn strip_unsupported_svg_text_nodes(src: &str) -> String {
+  use std::ops::Range;
+
+  use roxmltree::{Document, Node};
+
+  fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    ranges.sort_by_key(|range| (range.start, range.end));
+
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+      if let Some(last) = merged.last_mut()
+        && range.start <= last.end
+      {
+        last.end = last.end.max(range.end);
+      } else {
+        merged.push(range);
+      }
+    }
+
+    merged
+  }
+
+  let Ok(document) = Document::parse(src) else {
+    return src.to_owned();
+  };
+
+  let ranges = document
+    .descendants()
+    .filter(Node::is_element)
+    .filter_map(|node| {
+      let name = node.tag_name().name();
+      if name == "text" || name == "tspan" {
+        Some(node.range())
+      } else {
+        None
+      }
+    })
+    .collect::<Vec<_>>();
+
+  if ranges.is_empty() {
+    return src.to_owned();
+  }
+
+  let merged_ranges = merge_ranges(ranges);
+  let mut stripped = String::with_capacity(src.len());
+  let mut cursor = 0;
+
+  for range in merged_ranges {
+    if range.start > cursor {
+      stripped.push_str(&src[cursor..range.start]);
+    }
+    cursor = cursor.max(range.end);
+  }
+
+  if cursor < src.len() {
+    stripped.push_str(&src[cursor..]);
+  }
+
+  stripped
+}
+
+#[cfg(feature = "svg")]
 /// Parse SVG from &str.
 pub fn parse_svg_str(src: &str) -> ImageResult {
   use resvg::usvg::Tree;
 
-  let tree = Tree::from_str(src, &Default::default()).map_err(ImageResourceError::SvgParseError)?;
+  let sanitized_svg = strip_unsupported_svg_text_nodes(src);
+  let tree = Tree::from_str(&sanitized_svg, &Default::default())
+    .map_err(ImageResourceError::SvgParseError)?;
 
   Ok(Arc::new(ImageSource::Svg {
-    source: Arc::from(src),
+    source: Arc::from(sanitized_svg),
     tree: Box::new(tree),
   }))
 }
@@ -248,6 +312,21 @@ mod tests {
       .into_owned();
 
     assert_eq!(first.as_raw(), second.as_raw());
+    Ok(())
+  }
+
+  #[cfg(feature = "svg")]
+  #[test]
+  fn parse_svg_str_strips_text_and_tspan_nodes() -> Result<(), ImageResourceError> {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect x="0" y="0" width="20" height="20" fill="#ff0000"/><text x="2" y="10">hello <tspan>world</tspan></text><g><tspan>orphan</tspan></g></svg>"##;
+    let image = parse_svg_str(svg)?;
+    let ImageSource::Svg { source, .. } = image.as_ref() else {
+      unreachable!()
+    };
+
+    assert!(source.contains("<rect"));
+    assert!(!source.contains("<text"));
+    assert!(!source.contains("<tspan"));
     Ok(())
   }
 
