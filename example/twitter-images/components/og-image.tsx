@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { readFile } from "node:fs/promises";
 import { Box, Brain, Globe, type LucideIcon, Zap } from "lucide-react";
 import { createElement } from "react";
 
@@ -10,7 +10,7 @@ const accentColor = "#ff3535";
 export const persistentImages = [
   {
     src: "takumi.svg",
-    data: await file("../../assets/images/takumi.svg").arrayBuffer(),
+    data: await readFile("../../assets/images/takumi.svg"),
   },
 ];
 

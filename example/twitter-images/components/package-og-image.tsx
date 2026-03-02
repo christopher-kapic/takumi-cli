@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { readFile } from "node:fs/promises";
 import {
   Box,
   Code,
@@ -168,7 +168,7 @@ export const fonts = ["geist/Geist[wght].woff2", "geist/GeistMono[wght].woff2"];
 export const persistentImages = [
   {
     src: "logo.svg",
-    data: await file("../../docs/public/logo.svg").arrayBuffer(),
+    data: await readFile("../../docs/public/logo.svg"),
   },
 ];
 

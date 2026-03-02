@@ -1,9 +1,9 @@
-import { file } from "bun";
+import { readFile } from "node:fs/promises";
 
 export const persistentImages = [
   {
     src: "takumi.svg",
-    data: await file("../../assets/images/takumi.svg").arrayBuffer(),
+    data: await readFile("../../assets/images/takumi.svg"),
   },
 ];
 

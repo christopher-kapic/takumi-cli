@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { readFile } from "node:fs/promises";
 
 export const name = "x-post-image";
 
@@ -10,15 +10,15 @@ export const fonts = [];
 export const persistentImages = [
   {
     src: "takumi.svg",
-    data: await file("../../assets/images/takumi.svg").arrayBuffer(),
+    data: await readFile("../../assets/images/takumi.svg"),
   },
   {
     src: "fuma.jpg",
-    data: await file("../../assets/images/fuma.jpg").arrayBuffer(),
+    data: await readFile("../../assets/images/fuma.jpg"),
   },
   {
     src: "large.jpg",
-    data: await file("../../assets/images/fumadocs-core-v16.jpg").arrayBuffer(),
+    data: await readFile("../../assets/images/fumadocs-core-v16.jpg"),
   },
 ];
 
