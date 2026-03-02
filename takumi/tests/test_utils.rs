@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   fs::File,
   io::Read,
   path::{Path, PathBuf},
@@ -164,18 +165,18 @@ pub fn run_fixture_test_with_options(options: RenderOptions<'_, NodeKind>, fixtu
   let image = render(options).unwrap();
 
   save_image(
-    &image,
+    image,
     format!("tests/fixtures-generated/{}.webp", fixture_name),
     ImageOutputFormat::WebP,
   );
 }
 
-fn save_image<P: AsRef<Path>>(image: &RgbaImage, path: P, format: ImageOutputFormat) {
+fn save_image<P: AsRef<Path>>(image: RgbaImage, path: P, format: ImageOutputFormat) {
   let path = path.as_ref();
 
   let mut file = File::create(path).unwrap();
 
-  write_image(image, &mut file, format, None).unwrap();
+  write_image(Cow::Owned(image), &mut file, format, None).unwrap();
 }
 
 #[allow(dead_code)]

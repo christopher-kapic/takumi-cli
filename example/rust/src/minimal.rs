@@ -1,5 +1,5 @@
 // Import necessary modules for file operations and takumi library components
-use std::fs::File;
+use std::{borrow::Cow, fs::File};
 
 use takumi::{
   GlobalContext,
@@ -70,5 +70,5 @@ pub fn say_hello_to(name: &str) {
   let mut file = File::create("output.webp").unwrap();
 
   // Write the image to the file in WebP format
-  write_image(&image, &mut file, ImageOutputFormat::WebP, None).unwrap();
+  write_image(Cow::Owned(image), &mut file, ImageOutputFormat::WebP, None).unwrap();
 }

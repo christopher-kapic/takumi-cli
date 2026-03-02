@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
@@ -101,7 +102,13 @@ impl Task for RenderTask {
 
     let mut buffer = Vec::new();
 
-    write_image(&image, &mut buffer, self.format.into(), self.quality).map_err(map_error)?;
+    write_image(
+      Cow::Owned(image),
+      &mut buffer,
+      self.format.into(),
+      self.quality,
+    )
+    .map_err(map_error)?;
 
     Ok(buffer)
   }

@@ -5,6 +5,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::from_str;
+use std::borrow::Cow;
 use takumi::{
   layout::{Viewport, node::NodeKind},
   rendering::{ImageOutputFormat, RenderOptionsBuilder, render, write_image},
@@ -55,7 +56,7 @@ pub async fn generate_image_handler(
 
     let mut buffer = Vec::new();
 
-    write_image(&image, &mut buffer, format, query.quality).map_err(|_| {
+    write_image(Cow::Owned(image), &mut buffer, format, query.quality).map_err(|_| {
       (
         StatusCode::INTERNAL_SERVER_ERROR,
         "Failed to write image.".to_string(),

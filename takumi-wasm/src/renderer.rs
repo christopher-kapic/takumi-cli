@@ -11,7 +11,7 @@ use crate::{
 };
 use base64::{Engine, prelude::BASE64_STANDARD};
 use serde_wasm_bindgen::{from_value, to_value};
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
 use takumi::{
   GlobalContext,
   layout::{DEFAULT_DEVICE_PIXEL_RATIO, DEFAULT_FONT_SIZE, Viewport, node::NodeKind},
@@ -196,7 +196,13 @@ impl Renderer {
 
     let mut buffer = Vec::new();
 
-    write_image(&image, &mut buffer, format.into(), options.quality).map_err(map_error)?;
+    write_image(
+      Cow::Owned(image),
+      &mut buffer,
+      format.into(),
+      options.quality,
+    )
+    .map_err(map_error)?;
 
     Ok(buffer)
   }

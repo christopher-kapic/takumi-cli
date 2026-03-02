@@ -69,16 +69,34 @@ impl AnimationFrame {
 
 const U24_MAX: u32 = 0xffffff;
 
-// Strip alpha channel into a tightly packed RGB buffer
-fn strip_alpha_channel(image: &RgbaImage) -> Vec<u8> {
-  let pixels = bytemuck::cast_slice::<u8, [u8; 4]>(image.as_raw());
-  let mut rgb = Vec::with_capacity(pixels.len() * 3);
+fn strip_alpha_channel(image: Cow<'_, RgbaImage>) -> Vec<u8> {
+  match image {
+    Cow::Owned(image) => {
+      let mut rgba = image.into_raw();
+      let pixels = rgba.len() / 4;
 
-  for [r, g, b, _] in pixels {
-    rgb.extend_from_slice(&[*r, *g, *b]);
+      for pixel_index in 0..pixels {
+        let src_offset = pixel_index * 4;
+        let dst_offset = pixel_index * 3;
+        rgba[dst_offset] = rgba[src_offset];
+        rgba[dst_offset + 1] = rgba[src_offset + 1];
+        rgba[dst_offset + 2] = rgba[src_offset + 2];
+      }
+
+      rgba.truncate(pixels * 3);
+      rgba
+    }
+    Cow::Borrowed(image) => {
+      let pixels = bytemuck::cast_slice::<u8, [u8; 4]>(image.as_raw());
+      let mut rgb = Vec::with_capacity(pixels.len() * 3);
+
+      for [r, g, b, _] in pixels {
+        rgb.extend_from_slice(&[*r, *g, *b]);
+      }
+
+      rgb
+    }
   }
-
-  rgb
 }
 
 fn has_any_alpha_pixel(image: &RgbaImage) -> bool {
@@ -88,11 +106,18 @@ fn has_any_alpha_pixel(image: &RgbaImage) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_webp(image: &RgbaImage, destination: &mut impl Write, quality: Option<u8>) -> Result<()> {
+fn write_webp(
+  image: Cow<'_, RgbaImage>,
+  destination: &mut impl Write,
+  quality: Option<u8>,
+) -> Result<()> {
   use webp::{Encoder as WebpEncoder, WebPConfig};
 
   let requested_quality = quality.unwrap_or(100).clamp(0, 100);
   let is_lossless = requested_quality == 100;
+  let has_alpha = has_any_alpha_pixel(&image);
+  let width = image.width();
+  let height = image.height();
 
   let mut config =
     WebPConfig::new().map_err(|_| IoError(IoStdError::other("Failed to construct WebP config")))?;
@@ -105,18 +130,31 @@ fn write_webp(image: &RgbaImage, destination: &mut impl Write, quality: Option<u
     requested_quality as f32
   };
 
-  let encoded = WebpEncoder::from_rgba(image.as_raw(), image.width(), image.height())
-    .encode_advanced(&config)
-    .map_err(|error| IoError(IoStdError::other(format!("WebP encode error: {error:?}"))))?;
+  let encoded = if has_alpha {
+    WebpEncoder::from_rgba(image.as_raw(), width, height)
+      .encode_advanced(&config)
+      .map_err(|error| IoError(IoStdError::other(format!("WebP encode error: {error:?}"))))?
+  } else {
+    let rgb = strip_alpha_channel(image);
+    WebpEncoder::from_rgb(&rgb, width, height)
+      .encode_advanced(&config)
+      .map_err(|error| IoError(IoStdError::other(format!("WebP encode error: {error:?}"))))?
+  };
 
   destination.write_all(&encoded)?;
   Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write_webp(image: &RgbaImage, destination: &mut impl Write, _quality: Option<u8>) -> Result<()> {
+fn write_webp(
+  image: Cow<'_, RgbaImage>,
+  destination: &mut impl Write,
+  _quality: Option<u8>,
+) -> Result<()> {
   let encoder = WebPEncoder::new(destination);
-  let has_alpha = has_any_alpha_pixel(image);
+  let width = image.width();
+  let height = image.height();
+  let has_alpha = has_any_alpha_pixel(&image);
 
   let image_data = if has_alpha {
     Cow::Borrowed(image.as_raw())
@@ -126,8 +164,8 @@ fn write_webp(image: &RgbaImage, destination: &mut impl Write, _quality: Option<
 
   encoder.encode(
     &image_data,
-    image.width(),
-    image.height(),
+    width,
+    height,
     if has_alpha {
       image_webp::ColorType::Rgba8
     } else {
@@ -139,23 +177,25 @@ fn write_webp(image: &RgbaImage, destination: &mut impl Write, _quality: Option<
 }
 
 /// Writes a single rendered image to `destination` using `format`.
-pub fn write_image<T: Write>(
-  image: &RgbaImage,
+pub fn write_image<'a, T: Write>(
+  image: Cow<'a, RgbaImage>,
   destination: &mut T,
   format: ImageOutputFormat,
   quality: Option<u8>,
 ) -> Result<()> {
   match format {
     ImageOutputFormat::Jpeg => {
+      let width = image.width();
+      let height = image.height();
       let rgb = strip_alpha_channel(image);
 
       let encoder = JpegEncoder::new_with_quality(destination, quality.unwrap_or(75));
-      encoder.write_image(&rgb, image.width(), image.height(), ExtendedColorType::Rgb8)?;
+      encoder.write_image(&rgb, width, height, ExtendedColorType::Rgb8)?;
     }
     ImageOutputFormat::Png => {
       let mut encoder = png::Encoder::new(destination, image.width(), image.height());
 
-      let has_alpha = has_any_alpha_pixel(image);
+      let has_alpha = has_any_alpha_pixel(&image);
 
       let image_data = if has_alpha {
         Cow::Borrowed(image.as_raw())
