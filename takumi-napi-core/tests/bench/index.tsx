@@ -1,5 +1,5 @@
+import { writeFile } from "node:fs/promises";
 import { fromJsx } from "@takumi-rs/helpers/jsx";
-import { write } from "bun";
 import { Globe2 } from "lucide-react";
 import { bench, run, summary } from "mitata";
 import DocsTemplate from "../../../takumi-template/src/templates/docs-template";
@@ -24,10 +24,11 @@ async function createAnimationNodes() {
   const totalFrames = (durationMs * fps) / 1000;
 
   const frames = await Array.fromAsync({ length: totalFrames }, async () => {
-    const node = await createNode();
+    const { node, stylesheets } = await createNode();
     return {
       node,
       durationMs: durationMs / totalFrames,
+      stylesheets,
     };
   });
 
@@ -44,38 +45,42 @@ bench("createNode", createNode);
 
 summary(() => {
   bench("createNode + render (raw)", async () => {
-    const node = await createNode();
+    const { node, stylesheets } = await createNode();
     return renderer.render(node, {
       width: 1200,
       height: 630,
       format: "raw",
+      stylesheets,
     });
   });
 
   bench("createNode + render (png, fdeflate)", async () => {
-    const node = await createNode();
+    const { node, stylesheets } = await createNode();
     return renderer.render(node, {
       width: 1200,
       height: 630,
       quality: 75,
+      stylesheets,
     });
   });
 
   bench("createNode + render (png, flate2)", async () => {
-    const node = await createNode();
+    const { node, stylesheets } = await createNode();
     return renderer.render(node, {
       width: 1200,
       height: 630,
       quality: 100,
+      stylesheets,
     });
   });
 
   bench("createNode + render (webp)", async () => {
-    const node = await createNode();
+    const { node, stylesheets } = await createNode();
     return renderer.render(node, {
       width: 1200,
       height: 630,
       format: "webp",
+      stylesheets,
     });
   });
 });
@@ -110,14 +115,15 @@ summary(() => {
   });
 });
 
-await write(
+const { node, stylesheets } = await createNode();
+
+await writeFile(
   "tests/bench/bench.png",
-  await renderer
-    .render(await createNode(), {
-      width: 1200,
-      height: 630,
-    })
-    .then((r) => r.buffer),
+  await renderer.render(node, {
+    width: 1200,
+    height: 630,
+    stylesheets,
+  }),
 );
 
 await run();
