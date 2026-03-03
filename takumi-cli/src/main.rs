@@ -46,6 +46,9 @@ Examples:
   # Images: use a local file path in an <img> tag
   takumi '<img src=\"./logo.png\" width=\"200\" height=\"200\" />'
 
+  # CSS filters: invert an image to white (useful for logos on colored backgrounds)
+  takumi '<div style=\"display: flex; padding: 40px; background: #16a34a;\"><img src=\"./logo.png\" style=\"filter: brightness(0) invert(1);\" width=\"80\" height=\"80\" /></div>'
+
   # Fonts: load local font files with a glob pattern
   takumi --font './fonts/**/*.ttf' '<p style=\"font-family: MyFont;\">Custom font</p>'
 
@@ -60,6 +63,9 @@ Examples:
 
   # Tailwind CSS: arbitrary values
   takumi '<div tw=\"flex bg-[#1e293b] p-[40px]\"><p tw=\"text-[48px] text-white font-bold\">Custom values</p></div>'
+
+  # Transparent PNG: omit the background on the root element
+  takumi '<div style=\"display: flex; padding: 40px;\"><p style=\"color: black; font-size: 48px;\">No background = transparent</p></div>' -o transparent.png
 
   # Combine features: custom size, Google Font, and remote image
   takumi -W 1200 -H 630 --google-font 'Poppins' '<div style=\"display: flex; align-items: center; gap: 20px; padding: 40px; background: linear-gradient(135deg, #667eea, #764ba2);\"><img src=\"https://example.com/avatar.jpg\" width=\"80\" height=\"80\" /><p style=\"color: white; font-family: Poppins; font-size: 36px;\">Open Graph Card</p></div>' -o og.png"
